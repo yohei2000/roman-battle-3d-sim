@@ -190,5 +190,6 @@ function modeLabel(mode: GesturePreview["mode"]): string {
   if (mode === "paint_pressure") return "Paint Pressure";
   if (mode === "place_standard") return "Place Standard";
   if (mode === "draw_fallback") return "Draw Fallback";
+  if (mode === "set_contingency") return "Set Contingency";
   return "Select";
 }

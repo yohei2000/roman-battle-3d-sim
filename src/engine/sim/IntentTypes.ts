@@ -6,7 +6,8 @@ export type InputMode =
   | "draw_frontline"
   | "paint_pressure"
   | "place_standard"
-  | "draw_fallback";
+  | "draw_fallback"
+  | "set_contingency";
 
 export type IntentKind =
   | "frontline"
@@ -85,6 +86,7 @@ export interface FallbackLine {
 export interface ContingencyIntent {
   id: number;
   kind: "contingency";
+  side: SideId;
   trigger: "on_contact" | "on_friendly_rupture" | "on_enemy_rout";
   action: "advance" | "hold" | "reform" | "retreat" | "move_to_line";
   formationIds: FormationId[];

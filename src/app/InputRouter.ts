@@ -15,7 +15,7 @@ import type {
   SpacingMode,
 } from "../engine/sim/IntentTypes";
 
-type CommandTool = "none" | "frontline" | "pressure_stroke" | "standard" | "fallback_line";
+type CommandTool = "none" | "frontline" | "pressure_stroke" | "standard" | "fallback_line" | "contingency";
 
 const DEFAULT_LINE_OPTIONS: LineIntentOptions = {
   spacingMode: "normal",
@@ -112,7 +112,7 @@ export class InputRouter {
         this.pendingConfirm = true;
         this.world.recordTelemetry({ kind: "stroke", message: "standard preview" });
         this.renderLens();
-      } else if (this.activeTool !== "none") {
+      } else if (this.isStrokeTool()) {
         this.beginStroke(world, event);
       }
     });
@@ -134,9 +134,9 @@ export class InputRouter {
       }
 
       const dragDistance = Math.hypot(event.clientX - this.leftStart.screenX, event.clientY - this.leftStart.screenY);
-      if ((this.fHeld || this.activeTool !== "none") && this.activeTool !== "standard" && dragDistance > 6) {
+      if ((this.fHeld || this.isStrokeTool()) && this.activeTool !== "standard" && dragDistance > 6) {
         if (!this.drawing) {
-          if (this.activeTool === "none") {
+          if (!this.isStrokeTool()) {
             this.setTool("frontline", false);
           }
           this.beginStroke(this.leftStart.world, event);
@@ -280,6 +280,8 @@ export class InputRouter {
       ok = !!this.world.issueFallbackLineForSelection(this.previewPoints);
     } else if (this.activeTool === "standard" && this.previewPosition) {
       ok = !!this.world.placeStandardForSelection(this.previewPosition);
+    } else if (this.activeTool === "contingency") {
+      ok = !!this.world.setContingencyForSelection();
     }
 
     this.previewStatus = ok ? `${toolLabel(this.activeTool)} committed` : "Invalid command";
@@ -353,6 +355,7 @@ export class InputRouter {
     if (this.activeTool === "pressure_stroke") return "paint_pressure";
     if (this.activeTool === "standard") return "place_standard";
     if (this.activeTool === "fallback_line") return "draw_fallback";
+    if (this.activeTool === "contingency") return "set_contingency";
     return "select";
   }
 
@@ -390,6 +393,7 @@ export class InputRouter {
       ["pressure_stroke", "Pressure"],
       ["standard", "Standard"],
       ["fallback_line", "Fallback"],
+      ["contingency", "Contingency"],
     ] as Array<[CommandTool, string]>) {
       const button = document.createElement("button");
       button.type = "button";
@@ -420,6 +424,10 @@ export class InputRouter {
     this.lens.appendChild(actions);
   }
 
+  private isStrokeTool(): boolean {
+    return this.activeTool === "frontline" || this.activeTool === "pressure_stroke" || this.activeTool === "fallback_line";
+  }
+
   private showDragRect(x1: number, y1: number, x2: number, y2: number): void {
     const left = Math.min(x1, x2);
     const top = Math.min(y1, y2);
@@ -446,6 +454,7 @@ function toolLabel(tool: CommandTool): string {
   if (tool === "pressure_stroke") return "Pressure";
   if (tool === "fallback_line") return "Fallback";
   if (tool === "standard") return "Standard";
+  if (tool === "contingency") return "Contingency";
   if (tool === "frontline") return "Frontline";
   return "Command";
 }

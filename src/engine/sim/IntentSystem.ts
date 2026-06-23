@@ -1,4 +1,5 @@
 import type {
+  ContingencyIntent,
   FrontlineAssignment,
   FallbackLine,
   IntentInfluence,
@@ -116,6 +117,30 @@ export class IntentSystem {
     this.nextIntentId += 1;
     this.intents.push(intent);
     this.lastStatus = `Fallback line committed: ${formationIds.length} formations`;
+    this.revision += 1;
+    return intent;
+  }
+
+  addContingency(
+    side: SimSideId,
+    formationIds: string[],
+    createdAt: number,
+    trigger: ContingencyIntent["trigger"] = "on_contact",
+    action: ContingencyIntent["action"] = "hold",
+  ): ContingencyIntent {
+    const intent: ContingencyIntent = {
+      id: this.nextIntentId,
+      kind: "contingency",
+      side,
+      trigger,
+      action,
+      formationIds: [...formationIds],
+      consumed: false,
+      createdAt,
+    };
+    this.nextIntentId += 1;
+    this.intents.push(intent);
+    this.lastStatus = `Contingency set: ${trigger} -> ${action}`;
     this.revision += 1;
     return intent;
   }

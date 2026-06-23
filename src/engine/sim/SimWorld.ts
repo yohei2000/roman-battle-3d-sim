@@ -14,6 +14,7 @@ import { SIM_CONFIG } from "./SimConfig";
 import { TerrainField } from "./TerrainField";
 import { TelemetryCollector, type TelemetryEvent } from "./Telemetry";
 import type {
+  ContingencyIntent,
   FallbackLine,
   FrontlineAssignment,
   IntentSnapshot,
@@ -361,6 +362,23 @@ export class SimWorld {
       time: this.time,
       kind: "intent",
       message: "fallback committed",
+      data: { intent: intent.id, count: ids.length },
+    });
+    return intent;
+  }
+
+  setContingencyForSelection(): ContingencyIntent | undefined {
+    const ids = this.selectedFormations().map((formation) => formation.id);
+    if (ids.length === 0) {
+      this.telemetry.record({ time: this.time, kind: "invalid_command", message: "invalid contingency" });
+      return undefined;
+    }
+    const intent = this.intentSystem.addContingency("rome", ids, this.time);
+    this.pushEvent({ time: this.time, kind: "intent", message: `Contingency set: ${ids.length} formations` });
+    this.telemetry.record({
+      time: this.time,
+      kind: "intent",
+      message: "contingency set",
       data: { intent: intent.id, count: ids.length },
     });
     return intent;
