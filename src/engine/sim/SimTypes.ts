@@ -74,6 +74,8 @@ export interface Formation {
   pressure: number;
   discipline: number;
   panic: number;
+  intentPressure: number;
+  standardInfluence: number;
   commandDelay: number;
   speed: number;
   turnRate: number;
@@ -137,7 +139,7 @@ export interface DebugFlags {
 
 export interface SimEvent {
   time: number;
-  kind: "command" | "engagement" | "morale" | "ai";
+  kind: "command" | "engagement" | "morale" | "ai" | "intent";
   message: string;
   formationId?: string;
 }

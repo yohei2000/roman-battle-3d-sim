@@ -51,6 +51,8 @@ function makeFormation(
     pressure: 0.05,
     discipline,
     panic: 0.03,
+    intentPressure: 0,
+    standardInfluence: 0,
     commandDelay: 0,
     speed: side === "rome" ? 5.6 : 5.9,
     turnRate: side === "rome" ? 1.35 : 1.25,

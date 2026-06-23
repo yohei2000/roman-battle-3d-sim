@@ -107,8 +107,8 @@ export class MovementSystem {
     const step = Math.min(maxStep, remaining);
     const delta = scale(direction, step);
     formation.center = {
-      x: formation.center.x + delta.x,
-      y: formation.center.y + delta.y,
+      x: clamp(formation.center.x + delta.x, -76, 76),
+      y: clamp(formation.center.y + delta.y, -76, 76),
     };
     formation.targetFacing = angleOf(direction);
   }

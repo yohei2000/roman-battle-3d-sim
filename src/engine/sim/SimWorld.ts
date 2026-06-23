@@ -1,6 +1,6 @@
 import { pointInBox } from "../math/Geometry";
 import { Rng } from "../math/Rng";
-import { angleOf, distance, dot, lerp, normalize, scale, sub, type Vec2 } from "../math/Vec2";
+import { angleOf, clamp, distance, dot, lerp, normalize, scale, sub, type Vec2 } from "../math/Vec2";
 import { createDefaultScenario } from "../../scenarios/defaultScenario";
 import { AISystem } from "./AISystem";
 import { CommandSystem } from "./CommandSystem";
@@ -12,14 +12,23 @@ import { MovementSystem } from "./MovementSystem";
 import { ReplayRecorder } from "./ReplayRecorder";
 import { SIM_CONFIG } from "./SimConfig";
 import { TerrainField } from "./TerrainField";
+import { TelemetryCollector, type TelemetryEvent } from "./Telemetry";
 import type {
+  FallbackLine,
   FrontlineAssignment,
   IntentSnapshot,
   LineIntent,
   LineIntentOptions,
+  PressureStroke,
   SpacingMode,
+  Standard,
 } from "./IntentTypes";
 import type { DebugFlags, Formation, FormationIntent, SideId, SimEvent, SimSnapshot } from "./SimTypes";
+
+export interface SimWorldOptions {
+  seed?: number;
+  formations?: Formation[];
+}
 
 export class SimWorld {
   readonly terrain = new TerrainField();
@@ -31,8 +40,8 @@ export class SimWorld {
     pressureLabels: false,
   };
 
-  readonly formations = createDefaultScenario();
-  private readonly rng = new Rng(20260623);
+  readonly formations: Formation[];
+  private readonly rng: Rng;
   private readonly commands = new CommandSystem();
   private readonly movement = new MovementSystem();
   private readonly engagements = new EngagementSystem();
@@ -40,11 +49,14 @@ export class SimWorld {
   private readonly ai = new AISystem();
   private readonly formationSystem = new FormationSystem();
   private readonly intentSystem = new IntentSystem();
+  private readonly telemetry = new TelemetryCollector();
   private readonly replay = new ReplayRecorder();
   private recentEvents: SimEvent[] = [];
   time = 0;
 
-  constructor() {
+  constructor(options: SimWorldOptions = {}) {
+    this.formations = options.formations ?? createDefaultScenario();
+    this.rng = new Rng(options.seed ?? 20260623);
     for (const formation of this.formations) {
       this.formationSystem.initializeSlots(formation);
     }
@@ -57,9 +69,10 @@ export class SimWorld {
     this.commands.consumeQueued(this.formations, events, this.time);
     this.commands.updateCommandDelay(this.formations, dt, events, this.time);
     this.intentSystem.clearExpired(this.time);
+    this.applyIntentInfluence(dt);
     this.ai.update(this.formations, this.commands, this.time, this.rng, events);
     this.movement.update(this.formations, this.terrain, dt);
-    this.engagements.update(this.formations, this.terrain, this.rng, this.time, dt, events);
+    this.engagements.update(this.formations, this.terrain, this.rng, this.time, dt, events, this.intentSystem, this.telemetry);
     this.morale.update(this.formations, this.engagements.all(), dt, this.time, events);
     this.formationSystem.updateVisualStates(this.formations, this.engagements.all());
     this.replay.push(events);
@@ -81,6 +94,14 @@ export class SimWorld {
 
   intentSnapshot(): IntentSnapshot {
     return this.intentSystem.getSnapshot();
+  }
+
+  telemetrySnapshot(): TelemetryEvent[] {
+    return this.telemetry.snapshot();
+  }
+
+  recordTelemetry(event: Omit<TelemetryEvent, "time">): void {
+    this.telemetry.record({ ...event, time: this.time });
   }
 
   selectAt(point: Vec2, additive = false): void {
@@ -106,6 +127,12 @@ export class SimWorld {
 
     if (picked) {
       picked.selected = additive ? !picked.selected : true;
+      this.telemetry.record({
+        time: this.time,
+        kind: "selection",
+        message: picked.selected ? `${picked.id} selected` : `${picked.id} deselected`,
+        data: { formation: picked.id },
+      });
     }
   }
 
@@ -122,6 +149,25 @@ export class SimWorld {
         formation.center.y >= minY &&
         formation.center.y <= maxY;
     }
+    this.telemetry.record({
+      time: this.time,
+      kind: "selection",
+      message: "selection brush",
+      data: { count: this.selectedFormations().length },
+    });
+  }
+
+  selectFormationIds(ids: string[]): void {
+    const selected = new Set(ids);
+    for (const formation of this.formations) {
+      formation.selected = formation.side === "rome" && selected.has(formation.id);
+    }
+    this.telemetry.record({
+      time: this.time,
+      kind: "selection",
+      message: "public selection",
+      data: { count: this.selectedFormations().length },
+    });
   }
 
   issueSelected(type: FormationIntent, target?: Vec2): void {
@@ -150,11 +196,23 @@ export class SimWorld {
           { x: target.x + offset.x, y: target.y + offset.y + index * 0.01 },
           facing,
         );
+        this.telemetry.record({
+          time: this.time,
+          kind: "formation_command",
+          message: `${id} ${type}`,
+          data: { formation: id, command: type },
+        });
       });
       return;
     }
 
     this.commands.issue(ids, type, this.time, this.rng);
+    this.telemetry.record({
+      time: this.time,
+      kind: "formation_command",
+      message: `${type} command`,
+      data: { count: ids.length, command: type },
+    });
   }
 
   advanceSelected(): void {
@@ -167,6 +225,12 @@ export class SimWorld {
         y: nearest.center.y - direction.y * (nearest.depth + formation.depth),
       };
       this.commands.issue([formation.id], "advance", this.time, this.rng, target, angleOf(direction));
+      this.telemetry.record({
+        time: this.time,
+        kind: "formation_command",
+        message: `${formation.id} advance`,
+        data: { formation: formation.id, command: "advance" },
+      });
     }
   }
 
@@ -192,10 +256,7 @@ export class SimWorld {
       .map((id) => this.formations.find((formation) => formation.id === id))
       .filter(
         (formation): formation is Formation =>
-          !!formation &&
-          formation.side === "rome" &&
-          formation.selected &&
-          formation.state !== "routing",
+          !!formation && formation.side === "rome" && formation.state !== "routing",
       );
 
     if (targetFormations.length === 0) {
@@ -230,12 +291,77 @@ export class SimWorld {
           intentId: intent.id,
         },
       );
+      this.telemetry.record({
+        time: this.time,
+        kind: "formation_command",
+        message: `${assignment.formationId} line move`,
+        data: { formation: assignment.formationId, intent: intent.id },
+      });
     }
 
     this.pushEvent({
       time: this.time,
       kind: "command",
       message: `Frontline intent committed: ${assignments.length} formations`,
+    });
+    this.telemetry.record({
+      time: this.time,
+      kind: "intent",
+      message: "frontline committed",
+      data: { intent: intent.id, count: assignments.length },
+    });
+    return intent;
+  }
+
+  issuePressureStrokeForSelection(points: Vec2[], strength = 0.75, radius = 14): PressureStroke | undefined {
+    const ids = this.selectedFormations().map((formation) => formation.id);
+    const cleanPoints = sanitizePolyline(points);
+    if (ids.length === 0 || cleanPoints.length < 2) {
+      this.telemetry.record({ time: this.time, kind: "invalid_command", message: "invalid pressure stroke" });
+      return undefined;
+    }
+    const intent = this.intentSystem.addPressureStroke("rome", cleanPoints, radius, strength, ids, this.time);
+    this.pushEvent({ time: this.time, kind: "intent", message: `Pressure intent committed: ${ids.length} formations` });
+    this.telemetry.record({
+      time: this.time,
+      kind: "intent",
+      message: "pressure committed",
+      data: { intent: intent.id, count: ids.length },
+    });
+    return intent;
+  }
+
+  placeStandardForSelection(position: Vec2): Standard | undefined {
+    const ids = this.selectedFormations().map((formation) => formation.id);
+    if (ids.length === 0) {
+      this.telemetry.record({ time: this.time, kind: "invalid_command", message: "invalid standard placement" });
+      return undefined;
+    }
+    const intent = this.intentSystem.addStandard("rome", position, ids, this.time);
+    this.pushEvent({ time: this.time, kind: "intent", message: "Standard placed" });
+    this.telemetry.record({
+      time: this.time,
+      kind: "intent",
+      message: "standard placed",
+      data: { intent: intent.id, count: ids.length },
+    });
+    return intent;
+  }
+
+  issueFallbackLineForSelection(points: Vec2[]): FallbackLine | undefined {
+    const ids = this.selectedFormations().map((formation) => formation.id);
+    const cleanPoints = sanitizePolyline(points);
+    if (ids.length === 0 || cleanPoints.length < 2) {
+      this.telemetry.record({ time: this.time, kind: "invalid_command", message: "invalid fallback line" });
+      return undefined;
+    }
+    const intent = this.intentSystem.addFallbackLine("rome", cleanPoints, ids, this.time);
+    this.pushEvent({ time: this.time, kind: "intent", message: `Fallback line committed: ${ids.length} formations` });
+    this.telemetry.record({
+      time: this.time,
+      kind: "intent",
+      message: "fallback committed",
+      data: { intent: intent.id, count: ids.length },
     });
     return intent;
   }
@@ -258,6 +384,11 @@ export class SimWorld {
       time: this.time,
       kind: "command",
       message: removed ? `${removed.kind} intent undone` : "No intent to undo",
+    });
+    this.telemetry.record({
+      time: this.time,
+      kind: "intent",
+      message: removed ? `${removed.kind} undone` : "undo empty",
     });
   }
 
@@ -326,6 +457,20 @@ export class SimWorld {
       { x: 0, y: 0 },
     );
     return { x: sum.x / enemies.length, y: sum.y / enemies.length };
+  }
+
+  private applyIntentInfluence(dt: number): void {
+    for (const formation of this.formations) {
+      const influence = this.intentSystem.getInfluenceForFormation(formation.side, formation.center);
+      formation.intentPressure = influence.pressureStrength;
+      formation.standardInfluence = influence.standardMorale;
+      if (influence.standardMorale > 0) {
+        formation.panic = clamp(formation.panic - dt * (0.045 + influence.standardMorale * 0.12), 0, 1.2);
+        formation.pressure = clamp(formation.pressure - dt * (0.04 + influence.standardCommand * 0.08), 0, 1.4);
+        formation.morale = clamp(formation.morale + dt * influence.standardMorale * 0.045, 0, 1);
+        formation.discipline = clamp(formation.discipline + dt * influence.standardCommand * 0.025, 0, 1);
+      }
+    }
   }
 
   private pushEvent(event: SimEvent): void {

@@ -16,6 +16,8 @@ import { SIM_CONFIG } from "./SimConfig";
 import type { ContactLane, Engagement, Formation, SimEvent } from "./SimTypes";
 import type { TerrainField } from "./TerrainField";
 import { SpatialGrid } from "./SpatialGrid";
+import type { IntentSystem } from "./IntentSystem";
+import type { TelemetryCollector } from "./Telemetry";
 
 export class EngagementSystem {
   private readonly grid = new SpatialGrid();
@@ -32,6 +34,8 @@ export class EngagementSystem {
     time: number,
     dt: number,
     events: SimEvent[],
+    intentSystem?: IntentSystem,
+    telemetry?: TelemetryCollector,
   ): void {
     const activeIds = new Set<string>();
 
@@ -54,7 +58,7 @@ export class EngagementSystem {
       activeIds.add(id);
       const engagement = this.engagements.get(id) ?? this.createEngagement(id, a, b, time, rng);
       engagement.contactLanes = this.buildContactLanes(engagement, a, b, terrain);
-      this.updateEngagementPhase(engagement, a, b, rng, time, dt, events);
+      this.updateEngagementPhase(engagement, a, b, rng, time, dt, events, intentSystem, telemetry);
       this.engagements.set(id, engagement);
       a.currentEngagementIds.push(id);
       b.currentEngagementIds.push(id);
@@ -159,18 +163,24 @@ export class EngagementSystem {
     time: number,
     dt: number,
     events: SimEvent[],
+    intentSystem?: IntentSystem,
+    telemetry?: TelemetryCollector,
   ): void {
-    const inContact = orientedBoxesOverlap(
-      formationBox(a),
-      formationBox(b),
-      SIM_CONFIG.engagementContactPadding,
-    );
+    const inContact =
+      orientedBoxesOverlap(formationBox(a), formationBox(b), SIM_CONFIG.engagementContactPadding) ||
+      distance(a.center, b.center) <
+        SIM_CONFIG.engagementNearDistance + a.depth * 0.5 + b.depth * 0.5;
     const lanePressure = average(engagement.contactLanes.map((lane) => lane.intensity));
     engagement.pressureA = lanePressure * (1 + b.discipline * 0.25 + a.flankThreat * 0.35);
     engagement.pressureB = lanePressure * (1 + a.discipline * 0.25 + b.flankThreat * 0.35);
+    const intentA = intentSystem?.getInfluenceForFormation(a.side, a.center);
+    const intentB = intentSystem?.getInfluenceForFormation(b.side, b.center);
+    const pressureA = intentA?.pressureStrength ?? 0;
+    const pressureB = intentB?.pressureStrength ?? 0;
 
     if (engagement.phase === "approach" && inContact) {
       this.transition(engagement, "standoff", time, events, "lines locked");
+      telemetry?.record({ time, kind: "engagement_phase", message: "approach->standoff", data: { engagement: engagement.id } });
     }
 
     if (engagement.phase === "approach") {
@@ -182,24 +192,26 @@ export class EngagementSystem {
     if (engagement.phase === "standoff") {
       a.pressure = clamp(a.pressure + dt * SIM_CONFIG.standoffPressureRate * (1 + a.flankThreat), 0, 1.4);
       b.pressure = clamp(b.pressure + dt * SIM_CONFIG.standoffPressureRate * (1 + b.flankThreat), 0, 1.4);
-      a.fatigue = clamp(a.fatigue + dt * 0.018, 0, 1);
-      b.fatigue = clamp(b.fatigue + dt * 0.018, 0, 1);
-      a.cohesion = clamp(a.cohesion - dt * 0.01 * (1 + a.flankThreat), 0, 1);
-      b.cohesion = clamp(b.cohesion - dt * 0.01 * (1 + b.flankThreat), 0, 1);
-      if (time >= engagement.nextSurgeAt) {
-        this.resolveSurge(engagement, a, b, rng, time, events);
+      a.fatigue = clamp(a.fatigue + dt * (0.018 + pressureA * 0.018), 0, 1);
+      b.fatigue = clamp(b.fatigue + dt * (0.018 + pressureB * 0.018), 0, 1);
+      a.cohesion = clamp(a.cohesion - dt * (0.01 + pressureA * 0.006) * (1 + a.flankThreat), 0, 1);
+      b.cohesion = clamp(b.cohesion - dt * (0.01 + pressureB * 0.006) * (1 + b.flankThreat), 0, 1);
+      const pressureHaste = Math.max(pressureA, pressureB) * 1.2;
+      if (time >= engagement.nextSurgeAt - pressureHaste) {
+        this.resolveSurge(engagement, a, b, rng, time, events, pressureA, pressureB, telemetry);
       }
       return;
     }
 
     if (engagement.phase === "surge" && time - engagement.phaseStartedAt > 1.15) {
-      this.applySurgeOutcome(engagement, a, b, time, events);
+      this.applySurgeOutcome(engagement, a, b, time, events, telemetry);
       return;
     }
 
     if (engagement.phase === "recoil" && time - engagement.phaseStartedAt > 0.9) {
       engagement.nextSurgeAt = time + rng.range(2.5, 4.8);
       this.transition(engagement, "standoff", time, events, "line recovered");
+      telemetry?.record({ time, kind: "engagement_phase", message: "recoil->standoff", data: { engagement: engagement.id } });
       return;
     }
 
@@ -207,9 +219,11 @@ export class EngagementSystem {
       const loser = engagement.loserFormationId === a.id ? a : b;
       if (loser.state === "routing") {
         this.transition(engagement, "pursuit", time, events, "rout opened");
+        telemetry?.record({ time, kind: "engagement_phase", message: "rupture->pursuit", data: { engagement: engagement.id } });
       } else {
         engagement.nextSurgeAt = time + rng.range(2.5, 4.5);
         this.transition(engagement, "standoff", time, events, "rupture contained");
+        telemetry?.record({ time, kind: "engagement_phase", message: "rupture->standoff", data: { engagement: engagement.id } });
       }
       return;
     }
@@ -228,12 +242,15 @@ export class EngagementSystem {
     rng: Rng,
     time: number,
     events: SimEvent[],
+    pressureA: number,
+    pressureB: number,
+    telemetry?: TelemetryCollector,
   ): void {
     let scoreA = 0;
     let scoreB = 0;
     for (const lane of engagement.contactLanes) {
-      scoreA += surgePower(a, lane.aDensity, lane.flankFactorA, lane.terrainFactor, rng);
-      scoreB += surgePower(b, lane.bDensity, lane.flankFactorB, lane.terrainFactor, rng);
+      scoreA += surgePower(a, lane.aDensity, lane.flankFactorA, lane.terrainFactor, rng, pressureA);
+      scoreB += surgePower(b, lane.bDensity, lane.flankFactorB, lane.terrainFactor, rng, pressureB);
     }
     engagement.localAdvantageA = scoreA / Math.max(0.001, scoreB);
     engagement.localAdvantageB = scoreB / Math.max(0.001, scoreA);
@@ -262,6 +279,12 @@ export class EngagementSystem {
       events,
       `${winner.name} wins surge, ${loser.name} ${engagement.surgeOutcome}`,
     );
+    telemetry?.record({
+      time,
+      kind: "engagement_phase",
+      message: "surge resolved",
+      data: { engagement: engagement.id, winner: winner.id, loser: loser.id, outcome: engagement.surgeOutcome },
+    });
   }
 
   private applySurgeOutcome(
@@ -270,6 +293,7 @@ export class EngagementSystem {
     b: Formation,
     time: number,
     events: SimEvent[],
+    telemetry?: TelemetryCollector,
   ): void {
     const loser = engagement.loserFormationId === a.id ? a : b;
     const winner = loser === a ? b : a;
@@ -284,8 +308,10 @@ export class EngagementSystem {
       if (routeRisk(loser) > 0.28) {
         loser.state = "routing";
         loser.routeDirection = pushDirection;
+        telemetry?.record({ time, kind: "rout", message: `${loser.id} routed`, data: { formation: loser.id } });
       }
       this.transition(engagement, "rupture", time, events, `${loser.name} rupture`);
+      telemetry?.record({ time, kind: "rupture", message: `${loser.id} ruptured`, data: { formation: loser.id } });
       return;
     }
 
@@ -294,6 +320,7 @@ export class EngagementSystem {
     loser.cohesion = clamp(loser.cohesion - 0.055, 0, 1);
     loser.pressure = clamp(loser.pressure + 0.06, 0, 1.4);
     this.transition(engagement, "recoil", time, events, `${loser.name} recoils`);
+    telemetry?.record({ time, kind: "recoil", message: `${loser.id} recoiled`, data: { formation: loser.id } });
   }
 
   private transition(
@@ -336,6 +363,7 @@ function surgePower(
   flankFactorValue: number,
   terrainFactor: number,
   rng: Rng,
+  pressureIntent = 0,
 ): number {
   const troopQuality = 0.78 + formation.discipline * 0.42;
   const cohesionFactor = 0.42 + formation.cohesion * 0.88;
@@ -348,6 +376,7 @@ function surgePower(
   const fatiguePenalty = formation.fatigue * 0.36;
   const pressurePenalty = saturate(formation.pressure / 1.4) * 0.28;
   const flankExposurePenalty = flankFactorValue * 0.3;
+  const pressureBonus = 1 + pressureIntent * 0.12;
   return (
     troopQuality *
       cohesionFactor *
@@ -357,6 +386,7 @@ function surgePower(
       terrainFactor *
       facingFactor *
       localSupportFactor *
+      pressureBonus *
       randomNoise -
     fatiguePenalty -
     pressurePenalty -

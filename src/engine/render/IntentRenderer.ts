@@ -1,7 +1,14 @@
 import * as THREE from "three";
 import { boxCorners } from "../math/Geometry";
 import type { Vec2 } from "../math/Vec2";
-import type { GesturePreview, IntentSnapshot, LineIntent } from "../sim/IntentTypes";
+import type {
+  FallbackLine,
+  GesturePreview,
+  IntentSnapshot,
+  LineIntent,
+  PressureStroke,
+  Standard,
+} from "../sim/IntentTypes";
 import type { TerrainField } from "../sim/TerrainField";
 
 export class IntentRenderer {
@@ -24,8 +31,17 @@ export class IntentRenderer {
     for (const frontline of snapshot.committedFrontlines) {
       this.addFrontline(frontline, false);
     }
+    for (const pressure of snapshot.pressureStrokes) {
+      this.addPressure(pressure, false);
+    }
+    for (const standard of snapshot.standards) {
+      this.addStandard(standard, false);
+    }
+    for (const fallback of snapshot.fallbackLines) {
+      this.addFallback(fallback, false);
+    }
 
-    if (preview.active && preview.points.length > 1) {
+    if (preview.active) {
       this.addPreview(preview);
     }
   }
@@ -41,23 +57,50 @@ export class IntentRenderer {
   }
 
   private addPreview(preview: GesturePreview): void {
-    const color = 0xffdd83;
-    this.addLine(preview.points, color, true);
-    this.addEndpoints(preview.points, color);
-    for (const assignment of preview.assignments) {
-      this.addArrow(assignment.targetCenter, assignment.targetFacing, color, 0.72);
-      this.addGhostRect(assignment.targetCenter, assignment.targetFacing, assignment.width, assignment.depth, color, 0.52);
+    if (preview.tool === "frontline" && preview.points.length > 1) {
+      const color = 0xffdd83;
+      this.addLine(preview.points, color, true);
+      this.addEndpoints(preview.points, color);
+      for (const assignment of preview.assignments) {
+        this.addArrow(assignment.targetCenter, assignment.targetFacing, color, 0.72);
+        this.addGhostRect(assignment.targetCenter, assignment.targetFacing, assignment.width, assignment.depth, color, 0.52);
+      }
+    } else if (preview.tool === "pressure_stroke" && preview.points.length > 1) {
+      this.addLine(preview.points, 0xff9b54, true, 0.86);
+      this.addEndpoints(preview.points, 0xff9b54);
+    } else if (preview.tool === "fallback_line" && preview.points.length > 1) {
+      this.addLine(preview.points, 0x8ef2a0, true, 0.72);
+      this.addEndpoints(preview.points, 0x8ef2a0);
+    } else if (preview.tool === "standard" && preview.position) {
+      this.addCircle(preview.position, preview.radius ?? 22, 0xf6e27c, 0.48, true);
     }
   }
 
-  private addLine(points: Vec2[], color: THREE.ColorRepresentation, dashed: boolean): void {
+  private addPressure(intent: PressureStroke, preview: boolean): void {
+    this.addLine(intent.points, 0xff8b4a, preview, preview ? 0.82 : 0.58);
+  }
+
+  private addStandard(intent: Standard, preview: boolean): void {
+    this.addCircle(intent.position, intent.radius, 0xf6e27c, preview ? 0.58 : 0.42, true);
+  }
+
+  private addFallback(intent: FallbackLine, preview: boolean): void {
+    this.addLine(intent.points, 0x8ef2a0, true, preview ? 0.78 : 0.5);
+  }
+
+  private addLine(
+    points: Vec2[],
+    color: THREE.ColorRepresentation,
+    dashed: boolean,
+    opacity = dashed ? 0.76 : 0.74,
+  ): void {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.Float32BufferAttribute(this.linePositions(points, 0.42), 3));
     const material = dashed
       ? new THREE.LineDashedMaterial({
           color,
           transparent: true,
-          opacity: 0.76,
+          opacity,
           dashSize: 2.2,
           gapSize: 1.0,
           depthWrite: false,
@@ -65,7 +108,7 @@ export class IntentRenderer {
       : new THREE.LineBasicMaterial({
           color,
           transparent: true,
-          opacity: 0.74,
+          opacity,
           depthWrite: false,
         });
     const line = new THREE.Line(geometry, material);
@@ -133,6 +176,34 @@ export class IntentRenderer {
     this.group.add(new THREE.Line(geometry, material));
   }
 
+  private addCircle(
+    center: Vec2,
+    radius: number,
+    color: THREE.ColorRepresentation,
+    opacity: number,
+    dashed: boolean,
+  ): void {
+    const geometry = new THREE.RingGeometry(radius * 0.96, radius, 56);
+    const material = new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const ring = new THREE.Mesh(geometry, material);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(center.x, this.terrain.heightAt(center.x, center.y) + 0.5, center.y);
+    this.group.add(ring);
+
+    if (dashed) {
+      const poleGeometry = new THREE.CylinderGeometry(0.08, 0.1, 3.2, 6);
+      const pole = new THREE.Mesh(poleGeometry, material);
+      pole.position.set(center.x, this.terrain.heightAt(center.x, center.y) + 1.6, center.y);
+      this.group.add(pole);
+    }
+  }
+
   private linePositions(points: Vec2[], yOffset: number): number[] {
     const positions: number[] = [];
     for (const point of points) {
@@ -163,6 +234,9 @@ export class IntentRenderer {
 
 function makeSignature(snapshot: IntentSnapshot, preview: GesturePreview): string {
   const previewPoints = preview.points.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join("|");
+  const previewPosition = preview.position
+    ? `${preview.position.x.toFixed(1)},${preview.position.y.toFixed(1)}`
+    : "";
   const previewAssignments = preview.assignments
     .map(
       (assignment) =>
@@ -174,10 +248,13 @@ function makeSignature(snapshot: IntentSnapshot, preview: GesturePreview): strin
   return [
     snapshot.revision,
     preview.active,
+    preview.pendingConfirm,
+    preview.tool,
     preview.spacingMode,
     preview.depthMode,
     preview.alignmentMode,
     previewPoints,
+    previewPosition,
     previewAssignments,
   ].join(";");
 }

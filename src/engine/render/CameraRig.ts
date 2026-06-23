@@ -33,6 +33,17 @@ export class CameraRig {
     this.pitch = THREE.MathUtils.clamp(this.pitch + deltaY * 0.004, 0.46, 1.18);
   }
 
+  panPixels(deltaX: number, deltaY: number): void {
+    const forward = new THREE.Vector3(Math.sin(this.yaw), 0, Math.cos(this.yaw));
+    const right = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
+    const scale = this.distance * 0.0014;
+    this.target.addScaledVector(right, -deltaX * scale);
+    this.target.addScaledVector(forward, deltaY * scale);
+    this.target.x = THREE.MathUtils.clamp(this.target.x, -70, 70);
+    this.target.z = THREE.MathUtils.clamp(this.target.z, -70, 70);
+    this.target.y = this.terrain.heightAt(this.target.x, this.target.z) + 1.5;
+  }
+
   zoom(delta: number): void {
     this.distance = THREE.MathUtils.clamp(this.distance + delta * 0.045, 24, 118);
   }

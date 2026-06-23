@@ -1,15 +1,21 @@
 import type { CameraRig } from "../engine/render/CameraRig";
 import type { SimWorld } from "../engine/sim/SimWorld";
 import { distance, type Vec2 } from "../engine/math/Vec2";
+import { CameraGesture } from "./CameraGesture";
+import { detectInputProfile, type InputProfile } from "./InputProfile";
+import { PointerTracker } from "./PointerTracker";
 import type {
   AlignmentMode,
   DepthMode,
   FrontlineAssignment,
   GesturePreview,
   InputMode,
+  IntentKind,
   LineIntentOptions,
   SpacingMode,
 } from "../engine/sim/IntentTypes";
+
+type CommandTool = "none" | "frontline" | "pressure_stroke" | "standard" | "fallback_line";
 
 const DEFAULT_LINE_OPTIONS: LineIntentOptions = {
   spacingMode: "normal",
@@ -18,15 +24,22 @@ const DEFAULT_LINE_OPTIONS: LineIntentOptions = {
 };
 
 export class InputRouter {
+  private readonly tracker = new PointerTracker();
+  private readonly cameraGesture = new CameraGesture();
+  private readonly inputProfile: InputProfile = detectInputProfile();
   private leftStart?: { screenX: number; screenY: number; world: Vec2 };
-  private middleDown = false;
   private fHeld = false;
-  private drawingFrontline = false;
+  private activeTool: CommandTool = "none";
+  private lensOpen = false;
+  private drawing = false;
+  private pendingConfirm = false;
   private previewPoints: Vec2[] = [];
+  private previewPosition?: Vec2;
   private previewOptions: LineIntentOptions = { ...DEFAULT_LINE_OPTIONS };
   private previewAssignments: FrontlineAssignment[] = [];
   private previewStatus?: string;
   private readonly dragRect: HTMLDivElement;
+  private readonly lens: HTMLDivElement;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -37,14 +50,21 @@ export class InputRouter {
     this.dragRect = document.createElement("div");
     this.dragRect.className = "drag-rect";
     root.appendChild(this.dragRect);
+    this.lens = this.createCommandLens();
+    root.appendChild(this.lens);
     this.bind();
+    this.renderLens();
   }
 
   gesturePreview(): GesturePreview {
     return {
       mode: this.inputMode(),
-      active: this.drawingFrontline,
+      active: this.drawing || this.pendingConfirm,
+      pendingConfirm: this.pendingConfirm,
+      tool: this.previewTool(),
       points: this.previewPoints.map((point) => ({ ...point })),
+      position: this.previewPosition ? { ...this.previewPosition } : undefined,
+      radius: this.activeTool === "standard" ? 22 : this.activeTool === "pressure_stroke" ? 14 : undefined,
       assignments: this.previewAssignments.map((assignment) => ({
         ...assignment,
         targetCenter: { ...assignment.targetCenter },
@@ -52,6 +72,7 @@ export class InputRouter {
       spacingMode: this.previewOptions.spacingMode,
       depthMode: this.previewOptions.depthMode,
       alignmentMode: this.previewOptions.alignmentMode,
+      inputProfile: this.inputProfile.kind,
       status: this.previewStatus,
     };
   }
@@ -60,39 +81,11 @@ export class InputRouter {
     this.canvas.addEventListener("contextmenu", (event) => event.preventDefault());
     this.canvas.addEventListener("pointerdown", (event) => {
       this.canvas.setPointerCapture(event.pointerId);
-      if (event.button === 0) {
-        const world = this.camera.screenToGround(event.clientX, event.clientY, this.canvas);
-        if (world) {
-          this.leftStart = { screenX: event.clientX, screenY: event.clientY, world };
-        }
-      } else if (event.button === 1) {
-        this.middleDown = true;
-      }
-    });
+      this.tracker.begin(event);
 
-    this.canvas.addEventListener("pointermove", (event) => {
-      if (this.middleDown) {
-        this.camera.rotate(event.movementX, event.movementY);
-      }
-      if (this.leftStart) {
-        const world = this.camera.screenToGround(event.clientX, event.clientY, this.canvas);
-        const dx = event.clientX - this.leftStart.screenX;
-        const dy = event.clientY - this.leftStart.screenY;
-        const dragDistance = Math.hypot(dx, dy);
-        if ((this.fHeld || this.drawingFrontline) && world && dragDistance > 6) {
-          this.updateFrontlinePreview(world, event);
-          this.hideDragRect();
-          return;
-        }
-        if (dragDistance > 8) {
-          this.showDragRect(this.leftStart.screenX, this.leftStart.screenY, event.clientX, event.clientY);
-        }
-      }
-    });
-
-    this.canvas.addEventListener("pointerup", (event) => {
-      if (event.button === 1) {
-        this.middleDown = false;
+      if (this.tracker.count() >= 2) {
+        this.cancelTransientStroke("Camera gesture");
+        return;
       }
 
       if (event.button === 2) {
@@ -100,33 +93,101 @@ export class InputRouter {
         if (world) {
           this.world.issueSelected("move", world);
         }
+        return;
       }
 
-      if (event.button === 0 && this.leftStart) {
-        const world = this.camera.screenToGround(event.clientX, event.clientY, this.canvas);
-        if (this.drawingFrontline) {
-          if (world) {
-            this.addPreviewPoint(world, 0.12);
-          }
-          const intent = this.world.issueLineFormationForSelection(this.previewPoints, this.previewOptions);
-          this.previewStatus = intent
-            ? `Frontline intent committed: ${intent.formationIds.length} formations`
-            : "Frontline ignored: select formations and draw a longer line";
-          this.clearPreviewStroke();
-          this.leftStart = undefined;
-          this.hideDragRect();
-          return;
-        }
+      if (event.button !== 0) {
+        return;
+      }
 
-        const dragDistance = Math.hypot(event.clientX - this.leftStart.screenX, event.clientY - this.leftStart.screenY);
-        if (world && dragDistance > 8) {
-          this.world.selectRect(this.leftStart.world, world);
-        } else if (world) {
-          this.world.selectAt(world, event.shiftKey);
+      const world = this.camera.screenToGround(event.clientX, event.clientY, this.canvas);
+      if (!world) {
+        return;
+      }
+
+      this.leftStart = { screenX: event.clientX, screenY: event.clientY, world };
+      if (this.activeTool === "standard") {
+        this.previewPosition = world;
+        this.previewStatus = "Standard preview";
+        this.pendingConfirm = true;
+        this.world.recordTelemetry({ kind: "stroke", message: "standard preview" });
+        this.renderLens();
+      } else if (this.activeTool !== "none") {
+        this.beginStroke(world, event);
+      }
+    });
+
+    this.canvas.addEventListener("pointermove", (event) => {
+      const pointer = this.tracker.move(event);
+      if (!pointer) {
+        return;
+      }
+
+      const pointers = this.tracker.all();
+      if (this.cameraGesture.update(pointers, this.camera)) {
+        return;
+      }
+
+      const world = this.camera.screenToGround(event.clientX, event.clientY, this.canvas);
+      if (!world || !this.leftStart) {
+        return;
+      }
+
+      const dragDistance = Math.hypot(event.clientX - this.leftStart.screenX, event.clientY - this.leftStart.screenY);
+      if ((this.fHeld || this.activeTool !== "none") && this.activeTool !== "standard" && dragDistance > 6) {
+        if (!this.drawing) {
+          if (this.activeTool === "none") {
+            this.setTool("frontline", false);
+          }
+          this.beginStroke(this.leftStart.world, event);
         }
+        this.addPreviewPoint(world, 0.8);
+        this.updateAssignments();
+        this.hideDragRect();
+        return;
+      }
+
+      if (this.activeTool === "none" && dragDistance > 8) {
+        this.showDragRect(this.leftStart.screenX, this.leftStart.screenY, event.clientX, event.clientY);
+      }
+    });
+
+    this.canvas.addEventListener("pointerup", (event) => {
+      this.tracker.end(event.pointerId);
+      this.cameraGesture.reset();
+
+      if (event.button !== 0 || !this.leftStart) {
+        return;
+      }
+
+      const world = this.camera.screenToGround(event.clientX, event.clientY, this.canvas);
+      if (this.drawing) {
+        if (world) {
+          this.addPreviewPoint(world, 0.12);
+        }
+        this.finishStrokePreview();
         this.leftStart = undefined;
         this.hideDragRect();
+        return;
       }
+
+      if (this.activeTool === "none" && world) {
+        const dragDistance = Math.hypot(event.clientX - this.leftStart.screenX, event.clientY - this.leftStart.screenY);
+        if (dragDistance > 8) {
+          this.world.selectRect(this.leftStart.world, world);
+        } else {
+          this.world.selectAt(world, event.shiftKey);
+        }
+      }
+      this.leftStart = undefined;
+      this.hideDragRect();
+    });
+
+    this.canvas.addEventListener("pointercancel", (event) => {
+      this.tracker.cancel(event.pointerId);
+      this.cameraGesture.reset();
+      this.cancelTransientStroke("Pointer cancelled");
+      this.world.recordTelemetry({ kind: "pointercancel", message: "pointercancel", data: { pointerId: event.pointerId } });
     });
 
     this.canvas.addEventListener("wheel", (event) => {
@@ -135,22 +196,26 @@ export class InputRouter {
     });
 
     window.addEventListener("keydown", (event) => {
-      if (event.repeat) return;
       const key = event.key.toLowerCase();
       if (key === "f") {
         this.fHeld = true;
         this.previewStatus = "Draw Frontline";
+        this.renderLens();
         return;
       }
-      if (key === "escape" && this.drawingFrontline) {
+      if (key === "enter" && this.pendingConfirm) {
         event.preventDefault();
-        this.cancelFrontlinePreview();
+        this.confirmPreview();
+        return;
+      }
+      if (key === "escape") {
+        event.preventDefault();
+        this.cancelPreview("Cancelled");
         return;
       }
       if (key === "backspace") {
         event.preventDefault();
-        this.world.undoLastIntent("rome");
-        this.previewStatus = "Last intent undone";
+        this.undoLastIntent();
         return;
       }
       if (key === "c") {
@@ -161,32 +226,89 @@ export class InputRouter {
         this.camera.setKey(event.key, true);
       }
     });
+
     window.addEventListener("keyup", (event) => {
       if (event.key.toLowerCase() === "f") {
         this.fHeld = false;
-        if (!this.drawingFrontline && this.previewStatus === "Draw Frontline") {
+        if (!this.drawing && !this.pendingConfirm && this.activeTool === "frontline") {
+          this.setTool("none", false);
+        }
+        if (!this.drawing && !this.pendingConfirm && this.previewStatus === "Draw Frontline") {
           this.previewStatus = undefined;
         }
+        this.renderLens();
         return;
       }
       this.camera.setKey(event.key, false);
     });
   }
 
-  private inputMode(): InputMode {
-    return this.fHeld || this.drawingFrontline ? "draw_frontline" : "select";
+  private beginStroke(world: Vec2, event: PointerEvent): void {
+    this.drawing = true;
+    this.pendingConfirm = false;
+    this.previewPoints = [{ ...world }];
+    this.previewPosition = undefined;
+    this.previewOptions = readLineOptions(event);
+    this.previewAssignments = [];
+    this.previewStatus = `${toolLabel(this.activeTool)} stroke`;
+    this.world.recordTelemetry({ kind: "stroke", message: `${this.activeTool} begin` });
+    this.renderLens();
   }
 
-  private updateFrontlinePreview(world: Vec2, event: PointerEvent): void {
-    if (!this.drawingFrontline) {
-      this.drawingFrontline = true;
-      this.previewPoints = this.leftStart ? [{ ...this.leftStart.world }] : [];
+  private finishStrokePreview(): void {
+    this.drawing = false;
+    this.pendingConfirm = this.previewPoints.length >= 2;
+    if (!this.pendingConfirm) {
+      this.previewStatus = "Invalid stroke";
+      this.world.recordTelemetry({ kind: "invalid_command", message: "stroke too short" });
+      this.clearPreviewData(false);
+    } else {
+      this.updateAssignments();
+      this.previewStatus = `${toolLabel(this.activeTool)} preview`;
+      this.world.recordTelemetry({ kind: "stroke", message: `${this.activeTool} preview`, data: { points: this.previewPoints.length } });
+    }
+    this.renderLens();
+  }
+
+  private confirmPreview(): void {
+    let ok = false;
+    if (this.activeTool === "frontline") {
+      ok = !!this.world.issueLineFormationForSelection(this.previewPoints, this.previewOptions);
+    } else if (this.activeTool === "pressure_stroke") {
+      ok = !!this.world.issuePressureStrokeForSelection(this.previewPoints);
+    } else if (this.activeTool === "fallback_line") {
+      ok = !!this.world.issueFallbackLineForSelection(this.previewPoints);
+    } else if (this.activeTool === "standard" && this.previewPosition) {
+      ok = !!this.world.placeStandardForSelection(this.previewPosition);
     }
 
-    this.previewOptions = readLineOptions(event);
-    this.addPreviewPoint(world, 0.8);
-    this.previewAssignments = this.world.previewLineAssignments(this.previewPoints, this.previewOptions);
-    this.previewStatus = "Draw Frontline";
+    this.previewStatus = ok ? `${toolLabel(this.activeTool)} committed` : "Invalid command";
+    this.world.recordTelemetry({ kind: ok ? "intent" : "invalid_command", message: this.previewStatus });
+    this.clearPreviewData(true);
+    this.setTool("none", false);
+  }
+
+  private cancelPreview(status = "Cancelled"): void {
+    this.cancelTransientStroke(status);
+    this.setTool("none", false);
+  }
+
+  private cancelTransientStroke(status: string): void {
+    if (this.drawing || this.pendingConfirm) {
+      this.previewStatus = status;
+      this.world.recordTelemetry({ kind: "stroke", message: status });
+    }
+    this.clearPreviewData(false);
+    this.leftStart = undefined;
+    this.hideDragRect();
+    this.renderLens();
+  }
+
+  private undoLastIntent(): void {
+    this.world.undoLastIntent("rome");
+    this.previewStatus = "Last intent undone";
+    this.world.recordTelemetry({ kind: "intent", message: "undo requested" });
+    this.renderLens();
   }
 
   private addPreviewPoint(world: Vec2, minDistance: number): void {
@@ -196,18 +318,106 @@ export class InputRouter {
     }
   }
 
-  private cancelFrontlinePreview(): void {
-    this.clearPreviewStroke();
-    this.leftStart = undefined;
-    this.hideDragRect();
-    this.previewStatus = "Frontline cancelled";
+  private updateAssignments(): void {
+    this.previewAssignments =
+      this.activeTool === "frontline"
+        ? this.world.previewLineAssignments(this.previewPoints, this.previewOptions)
+        : [];
   }
 
-  private clearPreviewStroke(): void {
-    this.drawingFrontline = false;
+  private clearPreviewData(keepStatus: boolean): void {
+    this.drawing = false;
+    this.pendingConfirm = false;
     this.previewPoints = [];
+    this.previewPosition = undefined;
     this.previewAssignments = [];
     this.previewOptions = { ...DEFAULT_LINE_OPTIONS };
+    if (!keepStatus) {
+      this.previewStatus = undefined;
+    }
+  }
+
+  private setTool(tool: CommandTool, clearPreview = true): void {
+    this.activeTool = tool;
+    this.lensOpen = tool !== "none";
+    if (clearPreview) {
+      this.clearPreviewData(false);
+    }
+    this.previewStatus = tool === "none" ? undefined : `${toolLabel(tool)} ready`;
+    this.world.recordTelemetry({ kind: "lens", message: `${tool} selected` });
+    this.renderLens();
+  }
+
+  private inputMode(): InputMode {
+    if (this.fHeld || this.activeTool === "frontline") return "draw_frontline";
+    if (this.activeTool === "pressure_stroke") return "paint_pressure";
+    if (this.activeTool === "standard") return "place_standard";
+    if (this.activeTool === "fallback_line") return "draw_fallback";
+    return "select";
+  }
+
+  private previewTool(): IntentKind | "none" {
+    return this.activeTool === "none" ? "none" : this.activeTool;
+  }
+
+  private createCommandLens(): HTMLDivElement {
+    const lens = document.createElement("div");
+    lens.className = "command-lens";
+    return lens;
+  }
+
+  private renderLens(): void {
+    this.lens.innerHTML = "";
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "lens-primary";
+    toggle.textContent = this.lensOpen ? "Close" : "作戦";
+    toggle.addEventListener("click", () => {
+      this.lensOpen = !this.lensOpen;
+      this.world.recordTelemetry({ kind: "lens", message: this.lensOpen ? "lens open" : "lens close" });
+      this.renderLens();
+    });
+    this.lens.appendChild(toggle);
+
+    if (!this.lensOpen && !this.pendingConfirm) {
+      return;
+    }
+
+    const tools = document.createElement("div");
+    tools.className = "lens-tools";
+    for (const [tool, label] of [
+      ["frontline", "Frontline"],
+      ["pressure_stroke", "Pressure"],
+      ["standard", "Standard"],
+      ["fallback_line", "Fallback"],
+    ] as Array<[CommandTool, string]>) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = label;
+      button.className = this.activeTool === tool ? "active" : "";
+      button.disabled = this.pendingConfirm;
+      button.addEventListener("click", () => this.setTool(tool));
+      tools.appendChild(button);
+    }
+    this.lens.appendChild(tools);
+
+    const actions = document.createElement("div");
+    actions.className = "lens-actions";
+    const confirm = document.createElement("button");
+    confirm.type = "button";
+    confirm.textContent = "Confirm";
+    confirm.disabled = !this.pendingConfirm;
+    confirm.addEventListener("click", () => this.confirmPreview());
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.textContent = "Cancel";
+    cancel.addEventListener("click", () => this.cancelPreview("Cancelled"));
+    const undo = document.createElement("button");
+    undo.type = "button";
+    undo.textContent = "Undo";
+    undo.addEventListener("click", () => this.undoLastIntent());
+    actions.append(confirm, cancel, undo);
+    this.lens.appendChild(actions);
   }
 
   private showDragRect(x1: number, y1: number, x2: number, y2: number): void {
@@ -230,4 +440,12 @@ function readLineOptions(event: Pick<PointerEvent, "shiftKey" | "altKey" | "ctrl
   const depthMode: DepthMode = event.altKey ? "deep" : "normal";
   const alignmentMode: AlignmentMode = event.ctrlKey ? "careful" : "normal";
   return { spacingMode, depthMode, alignmentMode };
+}
+
+function toolLabel(tool: CommandTool): string {
+  if (tool === "pressure_stroke") return "Pressure";
+  if (tool === "fallback_line") return "Fallback";
+  if (tool === "standard") return "Standard";
+  if (tool === "frontline") return "Frontline";
+  return "Command";
 }

@@ -81,15 +81,19 @@ export class Hud {
     }
 
     this.intentPanel.innerHTML = "";
-    const frontlineCount = this.world.intentSnapshot().committedFrontlines.length;
+    const intentSnapshot = this.world.intentSnapshot();
+    const intentCount = intentSnapshot.intents.length;
     this.intentPanel.append(
-      row("Mode", gesturePreview.mode === "draw_frontline" ? "Draw Frontline" : "Select"),
-      row("Frontlines", `${frontlineCount}`),
+      row("Input", gesturePreview.inputProfile ?? "desktop"),
+      row("Mode", modeLabel(gesturePreview.mode)),
+      row("Intents", `${intentCount}`),
     );
-    if (gesturePreview.mode === "draw_frontline") {
+    if (gesturePreview.mode !== "select") {
       const hint = document.createElement("div");
       hint.className = "intent-hint";
-      hint.textContent = "F drag  Shift loose  Alt deep  Ctrl careful  Esc cancel";
+      hint.textContent = gesturePreview.pendingConfirm
+        ? "Confirm / Cancel / Undo"
+        : "Draw with one finger  Two fingers move camera";
       this.intentPanel.appendChild(hint);
     }
     if (gesturePreview.status) {
@@ -179,4 +183,12 @@ function escapeHtml(value: string): string {
     };
     return entities[char];
   });
+}
+
+function modeLabel(mode: GesturePreview["mode"]): string {
+  if (mode === "draw_frontline") return "Draw Frontline";
+  if (mode === "paint_pressure") return "Paint Pressure";
+  if (mode === "place_standard") return "Place Standard";
+  if (mode === "draw_fallback") return "Draw Fallback";
+  return "Select";
 }

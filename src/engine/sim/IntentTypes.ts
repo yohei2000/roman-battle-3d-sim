@@ -47,6 +47,8 @@ export interface LineIntent extends LineIntentOptions {
   assignments: FrontlineAssignment[];
 }
 
+export type AssignedTarget = FrontlineAssignment;
+
 export interface PressureStroke {
   id: number;
   kind: "pressure_stroke";
@@ -101,6 +103,9 @@ export type TacticalIntent =
 export interface IntentSnapshot {
   intents: TacticalIntent[];
   committedFrontlines: LineIntent[];
+  pressureStrokes: PressureStroke[];
+  standards: Standard[];
+  fallbackLines: FallbackLine[];
   revision: number;
   lastStatus?: string;
 }
@@ -108,7 +113,19 @@ export interface IntentSnapshot {
 export interface GesturePreview extends LineIntentOptions {
   mode: InputMode;
   active: boolean;
+  pendingConfirm: boolean;
+  tool: IntentKind | "none";
   points: Vec2[];
+  position?: Vec2;
+  radius?: number;
   assignments: FrontlineAssignment[];
+  inputProfile?: "desktop" | "touch" | "hybrid";
   status?: string;
+}
+
+export interface IntentInfluence {
+  pressureStrength: number;
+  standardMorale: number;
+  standardCommand: number;
+  fallbackAvailable: boolean;
 }
