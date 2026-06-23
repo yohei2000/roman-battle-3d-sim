@@ -164,7 +164,7 @@ export class InputRouter {
     window.addEventListener("keyup", (event) => {
       if (event.key.toLowerCase() === "f") {
         this.fHeld = false;
-        if (!this.drawingFrontline) {
+        if (!this.drawingFrontline && this.previewStatus === "Draw Frontline") {
           this.previewStatus = undefined;
         }
         return;
