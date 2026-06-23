@@ -1,10 +1,31 @@
 import type { CameraRig } from "../engine/render/CameraRig";
 import type { SimWorld } from "../engine/sim/SimWorld";
-import type { Vec2 } from "../engine/math/Vec2";
+import { distance, type Vec2 } from "../engine/math/Vec2";
+import type {
+  AlignmentMode,
+  DepthMode,
+  FrontlineAssignment,
+  GesturePreview,
+  InputMode,
+  LineIntentOptions,
+  SpacingMode,
+} from "../engine/sim/IntentTypes";
+
+const DEFAULT_LINE_OPTIONS: LineIntentOptions = {
+  spacingMode: "normal",
+  depthMode: "normal",
+  alignmentMode: "normal",
+};
 
 export class InputRouter {
   private leftStart?: { screenX: number; screenY: number; world: Vec2 };
   private middleDown = false;
+  private fHeld = false;
+  private drawingFrontline = false;
+  private previewPoints: Vec2[] = [];
+  private previewOptions: LineIntentOptions = { ...DEFAULT_LINE_OPTIONS };
+  private previewAssignments: FrontlineAssignment[] = [];
+  private previewStatus?: string;
   private readonly dragRect: HTMLDivElement;
 
   constructor(
@@ -17,6 +38,22 @@ export class InputRouter {
     this.dragRect.className = "drag-rect";
     root.appendChild(this.dragRect);
     this.bind();
+  }
+
+  gesturePreview(): GesturePreview {
+    return {
+      mode: this.inputMode(),
+      active: this.drawingFrontline,
+      points: this.previewPoints.map((point) => ({ ...point })),
+      assignments: this.previewAssignments.map((assignment) => ({
+        ...assignment,
+        targetCenter: { ...assignment.targetCenter },
+      })),
+      spacingMode: this.previewOptions.spacingMode,
+      depthMode: this.previewOptions.depthMode,
+      alignmentMode: this.previewOptions.alignmentMode,
+      status: this.previewStatus,
+    };
   }
 
   private bind(): void {
@@ -38,9 +75,16 @@ export class InputRouter {
         this.camera.rotate(event.movementX, event.movementY);
       }
       if (this.leftStart) {
+        const world = this.camera.screenToGround(event.clientX, event.clientY, this.canvas);
         const dx = event.clientX - this.leftStart.screenX;
         const dy = event.clientY - this.leftStart.screenY;
-        if (Math.hypot(dx, dy) > 8) {
+        const dragDistance = Math.hypot(dx, dy);
+        if ((this.fHeld || this.drawingFrontline) && world && dragDistance > 6) {
+          this.updateFrontlinePreview(world, event);
+          this.hideDragRect();
+          return;
+        }
+        if (dragDistance > 8) {
           this.showDragRect(this.leftStart.screenX, this.leftStart.screenY, event.clientX, event.clientY);
         }
       }
@@ -60,6 +104,20 @@ export class InputRouter {
 
       if (event.button === 0 && this.leftStart) {
         const world = this.camera.screenToGround(event.clientX, event.clientY, this.canvas);
+        if (this.drawingFrontline) {
+          if (world) {
+            this.addPreviewPoint(world, 0.12);
+          }
+          const intent = this.world.issueLineFormationForSelection(this.previewPoints, this.previewOptions);
+          this.previewStatus = intent
+            ? `Frontline intent committed: ${intent.formationIds.length} formations`
+            : "Frontline ignored: select formations and draw a longer line";
+          this.clearPreviewStroke();
+          this.leftStart = undefined;
+          this.hideDragRect();
+          return;
+        }
+
         const dragDistance = Math.hypot(event.clientX - this.leftStart.screenX, event.clientY - this.leftStart.screenY);
         if (world && dragDistance > 8) {
           this.world.selectRect(this.leftStart.world, world);
@@ -78,15 +136,78 @@ export class InputRouter {
 
     window.addEventListener("keydown", (event) => {
       if (event.repeat) return;
-      if (event.key.toLowerCase() === "c") {
+      const key = event.key.toLowerCase();
+      if (key === "f") {
+        this.fHeld = true;
+        this.previewStatus = "Draw Frontline";
+        return;
+      }
+      if (key === "escape" && this.drawingFrontline) {
+        event.preventDefault();
+        this.cancelFrontlinePreview();
+        return;
+      }
+      if (key === "backspace") {
+        event.preventDefault();
+        this.world.undoLastIntent("rome");
+        this.previewStatus = "Last intent undone";
+        return;
+      }
+      if (key === "c") {
         this.camera.toggleMode();
-      } else if (event.key.toLowerCase() === "d") {
+      } else if (key === "d") {
         this.world.toggleDebug("labels");
       } else {
         this.camera.setKey(event.key, true);
       }
     });
-    window.addEventListener("keyup", (event) => this.camera.setKey(event.key, false));
+    window.addEventListener("keyup", (event) => {
+      if (event.key.toLowerCase() === "f") {
+        this.fHeld = false;
+        if (!this.drawingFrontline) {
+          this.previewStatus = undefined;
+        }
+        return;
+      }
+      this.camera.setKey(event.key, false);
+    });
+  }
+
+  private inputMode(): InputMode {
+    return this.fHeld || this.drawingFrontline ? "draw_frontline" : "select";
+  }
+
+  private updateFrontlinePreview(world: Vec2, event: PointerEvent): void {
+    if (!this.drawingFrontline) {
+      this.drawingFrontline = true;
+      this.previewPoints = this.leftStart ? [{ ...this.leftStart.world }] : [];
+    }
+
+    this.previewOptions = readLineOptions(event);
+    this.addPreviewPoint(world, 0.8);
+    this.previewAssignments = this.world.previewLineAssignments(this.previewPoints, this.previewOptions);
+    this.previewStatus = "Draw Frontline";
+  }
+
+  private addPreviewPoint(world: Vec2, minDistance: number): void {
+    const previous = this.previewPoints[this.previewPoints.length - 1];
+    if (!previous || distance(previous, world) >= minDistance) {
+      this.previewPoints.push({ ...world });
+    }
+  }
+
+  private cancelFrontlinePreview(): void {
+    this.clearPreviewStroke();
+    this.leftStart = undefined;
+    this.hideDragRect();
+    this.previewStatus = "Frontline cancelled";
+  }
+
+  private clearPreviewStroke(): void {
+    this.drawingFrontline = false;
+    this.previewPoints = [];
+    this.previewAssignments = [];
+    this.previewOptions = { ...DEFAULT_LINE_OPTIONS };
   }
 
   private showDragRect(x1: number, y1: number, x2: number, y2: number): void {
@@ -102,4 +223,11 @@ export class InputRouter {
   private hideDragRect(): void {
     this.dragRect.style.display = "none";
   }
+}
+
+function readLineOptions(event: Pick<PointerEvent, "shiftKey" | "altKey" | "ctrlKey">): LineIntentOptions {
+  const spacingMode: SpacingMode = event.shiftKey ? "loose" : "normal";
+  const depthMode: DepthMode = event.altKey ? "deep" : "normal";
+  const alignmentMode: AlignmentMode = event.ctrlKey ? "careful" : "normal";
+  return { spacingMode, depthMode, alignmentMode };
 }

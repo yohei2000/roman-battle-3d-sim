@@ -1,10 +1,12 @@
 import type { LoopMetrics } from "../app/GameLoop";
 import type { RenderStats } from "../engine/render/Renderer";
+import type { GesturePreview } from "../engine/sim/IntentTypes";
 import type { DebugFlags, FormationIntent, SimSnapshot } from "../engine/sim/SimTypes";
 import type { SimWorld } from "../engine/sim/SimWorld";
 
 export class Hud {
   private readonly selectedPanel: HTMLDivElement;
+  private readonly intentPanel: HTMLDivElement;
   private readonly metricsPanel: HTMLDivElement;
   private readonly eventList: HTMLDivElement;
   private readonly commandButtons = new Map<FormationIntent, HTMLButtonElement>();
@@ -24,6 +26,9 @@ export class Hud {
     this.selectedPanel = document.createElement("div");
     this.selectedPanel.className = "panel selected-panel";
 
+    this.intentPanel = document.createElement("div");
+    this.intentPanel.className = "panel intent-panel";
+
     this.metricsPanel = document.createElement("div");
     this.metricsPanel.className = "panel metrics-panel";
 
@@ -38,11 +43,16 @@ export class Hud {
     this.addDebugToggle("labels", "Labels");
     this.addDebugToggle("pressureLabels", "Stats");
 
-    hud.append(commandBar, this.selectedPanel, this.metricsPanel, this.eventList, this.debugPanel);
+    hud.append(commandBar, this.selectedPanel, this.intentPanel, this.metricsPanel, this.eventList, this.debugPanel);
     root.appendChild(hud);
   }
 
-  update(snapshot: SimSnapshot, loop: LoopMetrics, renderStats: RenderStats): void {
+  update(
+    snapshot: SimSnapshot,
+    loop: LoopMetrics,
+    renderStats: RenderStats,
+    gesturePreview: GesturePreview,
+  ): void {
     const selected = snapshot.formations.filter((formation) => formation.selected);
     for (const [type, button] of this.commandButtons) {
       button.disabled = selected.length === 0 || (type === "retreat" && selected.every((f) => f.state === "routing"));
@@ -68,6 +78,25 @@ export class Hud {
         meter("Panic", Math.min(primary.panic / 1.2, 1), "#ff8f9b", true),
         row("Delay", `${primary.commandDelay.toFixed(2)}s`),
       );
+    }
+
+    this.intentPanel.innerHTML = "";
+    const frontlineCount = this.world.intentSnapshot().committedFrontlines.length;
+    this.intentPanel.append(
+      row("Mode", gesturePreview.mode === "draw_frontline" ? "Draw Frontline" : "Select"),
+      row("Frontlines", `${frontlineCount}`),
+    );
+    if (gesturePreview.mode === "draw_frontline") {
+      const hint = document.createElement("div");
+      hint.className = "intent-hint";
+      hint.textContent = "F drag  Shift loose  Alt deep  Ctrl careful  Esc cancel";
+      this.intentPanel.appendChild(hint);
+    }
+    if (gesturePreview.status) {
+      const status = document.createElement("div");
+      status.className = "intent-status";
+      status.textContent = gesturePreview.status;
+      this.intentPanel.appendChild(status);
     }
 
     this.metricsPanel.textContent = `FPS ${renderStats.fps.toFixed(0)}  SIM ${loop.simMs.toFixed(

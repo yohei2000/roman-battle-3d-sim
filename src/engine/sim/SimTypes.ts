@@ -47,6 +47,9 @@ export interface FormationCommand {
   type: FormationIntent;
   targetCenter?: Vec2;
   targetFacing?: number;
+  arrivalIntent?: "hold" | "reform";
+  careful?: boolean;
+  intentId?: number;
   issuedAt: number;
   delay: number;
 }
@@ -79,6 +82,9 @@ export interface Formation {
   currentEngagementIds: string[];
   selected: boolean;
   pendingCommand?: FormationCommand;
+  arrivalIntent?: "hold" | "reform";
+  carefulAlignment: boolean;
+  intendedLineId?: number;
   slotOffsets: Vec2[];
   soldierSeeds: number[];
   visualState: VisualSoldierState;

@@ -3,6 +3,12 @@ import { SIM_CONFIG } from "./SimConfig";
 import type { Formation, FormationCommand, FormationIntent, SimEvent } from "./SimTypes";
 import type { Rng } from "../math/Rng";
 
+export interface CommandIssueOptions {
+  arrivalIntent?: "hold" | "reform";
+  careful?: boolean;
+  intentId?: number;
+}
+
 export class CommandSystem {
   private nextCommandId = 1;
   private readonly queue: FormationCommand[] = [];
@@ -14,6 +20,7 @@ export class CommandSystem {
     rng: Rng,
     targetCenter?: { x: number; y: number },
     targetFacing?: number,
+    options: CommandIssueOptions = {},
   ): void {
     this.queue.push({
       id: this.nextCommandId,
@@ -21,6 +28,9 @@ export class CommandSystem {
       type,
       targetCenter,
       targetFacing,
+      arrivalIntent: options.arrivalIntent,
+      careful: options.careful,
+      intentId: options.intentId,
       issuedAt: time,
       delay: rng.range(SIM_CONFIG.commandDelayMin, SIM_CONFIG.commandDelayMax),
     });
@@ -65,6 +75,9 @@ export class CommandSystem {
       const command = formation.pendingCommand;
       formation.pendingCommand = undefined;
       formation.intent = command.type;
+      formation.arrivalIntent = command.arrivalIntent;
+      formation.carefulAlignment = command.careful ?? false;
+      formation.intendedLineId = command.intentId;
 
       if (command.targetCenter) {
         formation.targetCenter = { ...command.targetCenter };

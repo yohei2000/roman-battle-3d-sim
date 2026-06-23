@@ -19,6 +19,12 @@ npm.cmd run preview
 - Left click: select friendly formation.
 - Drag left mouse: marquee-select friendly formations.
 - Right click: move selected formations.
+- F + left drag: draw a frontline intent and send selected formations to it.
+- Shift + F drag: loose spacing.
+- Alt + F drag: deep formation preview.
+- Ctrl + F drag: careful alignment with lower cohesion loss and reform on arrival.
+- Esc: cancel active frontline drawing.
+- Backspace: undo the last committed visible intent.
 - Command buttons: hold, advance, reform, retreat.
 - WASD: pan tactical camera.
 - Mouse wheel: zoom.

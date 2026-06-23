@@ -47,8 +47,14 @@ export class MovementSystem {
         this.moveToward(formation, formation.targetCenter, dt, terrainSample.moveCost, false);
         formation.state = formation.intent === "advance" ? "moving" : "moving";
         formation.fatigue = clamp(formation.fatigue + dt * (0.02 + terrainSample.moveCost * 0.012), 0, 1);
-        formation.cohesion = clamp(formation.cohesion - terrainSample.cohesionCost * dt, 0, 1);
+        const cohesionScale = formation.carefulAlignment ? 0.55 : 1;
+        formation.cohesion = clamp(formation.cohesion - terrainSample.cohesionCost * dt * cohesionScale, 0, 1);
       } else {
+        if (formation.arrivalIntent) {
+          formation.intent = formation.arrivalIntent;
+          formation.arrivalIntent = undefined;
+          formation.carefulAlignment = false;
+        }
         const recoveryScale = formation.intent === "reform" ? 1.8 : 1;
         formation.state = formation.intent === "reform" ? "reforming" : formation.intent === "hold" ? "holding" : "idle";
         formation.cohesion = clamp(
@@ -66,7 +72,11 @@ export class MovementSystem {
       formation.facing = moveAngleToward(formation.facing, formation.targetFacing, facingStep);
       const turnAmount = Math.abs(oldFacing - formation.facing);
       if (turnAmount > 0.002 && wantsToMove) {
-        formation.cohesion = clamp(formation.cohesion - turnAmount * 0.035, 0, 1);
+        formation.cohesion = clamp(
+          formation.cohesion - turnAmount * (formation.carefulAlignment ? 0.014 : 0.035),
+          0,
+          1,
+        );
       }
 
       formation.formationIntegrity = clamp(
@@ -92,7 +102,7 @@ export class MovementSystem {
     const direction = normalize(offset);
     const speedScale = routing
       ? SIM_CONFIG.routingSpeedScale
-      : 1 - formation.fatigue * 0.32 + formation.cohesion * 0.18;
+      : (1 - formation.fatigue * 0.32 + formation.cohesion * 0.18) * (formation.carefulAlignment ? 0.86 : 1);
     const maxStep = (formation.speed * speedScale * dt) / moveCost;
     const step = Math.min(maxStep, remaining);
     const delta = scale(direction, step);

@@ -1,17 +1,25 @@
 import { pointInBox } from "../math/Geometry";
 import { Rng } from "../math/Rng";
-import { angleOf, clamp, distance, normalize, sub, type Vec2 } from "../math/Vec2";
+import { angleOf, distance, dot, lerp, normalize, scale, sub, type Vec2 } from "../math/Vec2";
 import { createDefaultScenario } from "../../scenarios/defaultScenario";
 import { AISystem } from "./AISystem";
 import { CommandSystem } from "./CommandSystem";
 import { EngagementSystem } from "./EngagementSystem";
 import { FormationSystem } from "./FormationSystem";
+import { IntentSystem } from "./IntentSystem";
 import { MoraleSystem } from "./MoraleSystem";
 import { MovementSystem } from "./MovementSystem";
 import { ReplayRecorder } from "./ReplayRecorder";
 import { SIM_CONFIG } from "./SimConfig";
 import { TerrainField } from "./TerrainField";
-import type { DebugFlags, FormationIntent, SimEvent, SimSnapshot } from "./SimTypes";
+import type {
+  FrontlineAssignment,
+  IntentSnapshot,
+  LineIntent,
+  LineIntentOptions,
+  SpacingMode,
+} from "./IntentTypes";
+import type { DebugFlags, Formation, FormationIntent, SideId, SimEvent, SimSnapshot } from "./SimTypes";
 
 export class SimWorld {
   readonly terrain = new TerrainField();
@@ -31,6 +39,7 @@ export class SimWorld {
   private readonly morale = new MoraleSystem();
   private readonly ai = new AISystem();
   private readonly formationSystem = new FormationSystem();
+  private readonly intentSystem = new IntentSystem();
   private readonly replay = new ReplayRecorder();
   private recentEvents: SimEvent[] = [];
   time = 0;
@@ -47,6 +56,7 @@ export class SimWorld {
     const events: SimEvent[] = [];
     this.commands.consumeQueued(this.formations, events, this.time);
     this.commands.updateCommandDelay(this.formations, dt, events, this.time);
+    this.intentSystem.clearExpired(this.time);
     this.ai.update(this.formations, this.commands, this.time, this.rng, events);
     this.movement.update(this.formations, this.terrain, dt);
     this.engagements.update(this.formations, this.terrain, this.rng, this.time, dt, events);
@@ -67,6 +77,10 @@ export class SimWorld {
 
   selectedFormations() {
     return this.formations.filter((formation) => formation.selected);
+  }
+
+  intentSnapshot(): IntentSnapshot {
+    return this.intentSystem.getSnapshot();
   }
 
   selectAt(point: Vec2, additive = false): void {
@@ -156,6 +170,97 @@ export class SimWorld {
     }
   }
 
+  issueLineFormationForSelection(points: Vec2[], options: LineIntentOptions): LineIntent | undefined {
+    return this.issueLineFormation(
+      this.selectedFormations().map((formation) => formation.id),
+      points,
+      options,
+    );
+  }
+
+  issueLineFormation(
+    formationIds: string[],
+    points: Vec2[],
+    options: LineIntentOptions,
+  ): LineIntent | undefined {
+    const cleanPoints = sanitizePolyline(points);
+    if (cleanPoints.length < 2) {
+      return undefined;
+    }
+
+    const targetFormations = formationIds
+      .map((id) => this.formations.find((formation) => formation.id === id))
+      .filter(
+        (formation): formation is Formation =>
+          !!formation &&
+          formation.side === "rome" &&
+          formation.selected &&
+          formation.state !== "routing",
+      );
+
+    if (targetFormations.length === 0) {
+      return undefined;
+    }
+
+    const assignments = this.planLineAssignments(targetFormations, cleanPoints, options);
+    if (assignments.length === 0) {
+      return undefined;
+    }
+
+    const intent = this.intentSystem.addLineIntent(
+      "rome",
+      cleanPoints,
+      targetFormations.map((formation) => formation.id),
+      options,
+      this.time,
+      assignments,
+    );
+
+    for (const assignment of assignments) {
+      this.commands.issue(
+        [assignment.formationId],
+        "move",
+        this.time,
+        this.rng,
+        assignment.targetCenter,
+        assignment.targetFacing,
+        {
+          arrivalIntent: options.alignmentMode === "careful" ? "reform" : "hold",
+          careful: options.alignmentMode === "careful",
+          intentId: intent.id,
+        },
+      );
+    }
+
+    this.pushEvent({
+      time: this.time,
+      kind: "command",
+      message: `Frontline intent committed: ${assignments.length} formations`,
+    });
+    return intent;
+  }
+
+  previewLineAssignments(points: Vec2[], options: LineIntentOptions): FrontlineAssignment[] {
+    const cleanPoints = sanitizePolyline(points);
+    if (cleanPoints.length < 2) {
+      return [];
+    }
+    return this.planLineAssignments(
+      this.selectedFormations().filter((formation) => formation.side === "rome" && formation.state !== "routing"),
+      cleanPoints,
+      options,
+    );
+  }
+
+  undoLastIntent(side: SideId = "rome"): void {
+    const removed = this.intentSystem.undoLastIntent(side);
+    this.pushEvent({
+      time: this.time,
+      kind: "command",
+      message: removed ? `${removed.kind} intent undone` : "No intent to undo",
+    });
+  }
+
   toggleDebug(flag: keyof DebugFlags): void {
     this.debugFlags[flag] = !this.debugFlags[flag];
   }
@@ -175,6 +280,59 @@ export class SimWorld {
     return { x: sum.x / selected.length, y: sum.y / selected.length };
   }
 
+  private planLineAssignments(
+    formations: Formation[],
+    points: Vec2[],
+    options: LineIntentOptions,
+  ): FrontlineAssignment[] {
+    if (formations.length === 0) {
+      return [];
+    }
+
+    const lineDirection = tangentAtPolyline(points, 0.5);
+    const sorted = [...formations].sort(
+      (a, b) => dot(sub(a.center, points[0]), lineDirection) - dot(sub(b.center, points[0]), lineDirection),
+    );
+    const enemyCentroid = this.enemyCentroidFor("rome");
+
+    return sorted.map((formation, index) => {
+      const t = sampleT(index, sorted.length, options.spacingMode);
+      const targetCenter = samplePolyline(points, t);
+      const tangent = tangentAtPolyline(points, t);
+      const targetFacing = chooseFacingNormal(tangent, targetCenter, enemyCentroid, formation.side);
+      const dimensions = intendedDimensions(formation, options);
+
+      return {
+        formationId: formation.id,
+        targetCenter,
+        targetFacing,
+        width: dimensions.width,
+        depth: dimensions.depth,
+        index,
+      };
+    });
+  }
+
+  private enemyCentroidFor(side: SideId): Vec2 | undefined {
+    const enemies = this.formations.filter((formation) => formation.side !== side && formation.state !== "routing");
+    if (enemies.length === 0) {
+      return undefined;
+    }
+    const sum = enemies.reduce(
+      (accumulator, formation) => ({
+        x: accumulator.x + formation.center.x,
+        y: accumulator.y + formation.center.y,
+      }),
+      { x: 0, y: 0 },
+    );
+    return { x: sum.x / enemies.length, y: sum.y / enemies.length };
+  }
+
+  private pushEvent(event: SimEvent): void {
+    this.replay.push([event]);
+    this.recentEvents = this.replay.recent(SIM_CONFIG.maxRecentEvents);
+  }
+
   private nearestEnemy(point: Vec2) {
     let best = this.formations.find((formation) => formation.side === "opposition");
     let bestDistance = best ? distance(point, best.center) : Number.POSITIVE_INFINITY;
@@ -188,4 +346,102 @@ export class SimWorld {
     }
     return best;
   }
+}
+
+function sanitizePolyline(points: Vec2[]): Vec2[] {
+  const clean: Vec2[] = [];
+  for (const point of points) {
+    if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) {
+      continue;
+    }
+    const previous = clean[clean.length - 1];
+    if (!previous || distance(previous, point) > 0.12) {
+      clean.push({ ...point });
+    }
+  }
+  return clean;
+}
+
+function polylineLength(points: Vec2[]): number {
+  let total = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    total += distance(points[index - 1], points[index]);
+  }
+  return total;
+}
+
+function samplePolyline(points: Vec2[], t: number): Vec2 {
+  const total = polylineLength(points);
+  if (total <= 0.001) {
+    return { ...points[0] };
+  }
+
+  const targetDistance = total * Math.max(0, Math.min(1, t));
+  let walked = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    const start = points[index - 1];
+    const end = points[index];
+    const segmentLength = distance(start, end);
+    if (walked + segmentLength >= targetDistance) {
+      const localT = (targetDistance - walked) / Math.max(segmentLength, 0.001);
+      return {
+        x: lerp(start.x, end.x, localT),
+        y: lerp(start.y, end.y, localT),
+      };
+    }
+    walked += segmentLength;
+  }
+
+  return { ...points[points.length - 1] };
+}
+
+function tangentAtPolyline(points: Vec2[], t: number): Vec2 {
+  const total = polylineLength(points);
+  if (total <= 0.001) {
+    return { x: 1, y: 0 };
+  }
+
+  const targetDistance = total * Math.max(0, Math.min(1, t));
+  let walked = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    const start = points[index - 1];
+    const end = points[index];
+    const segmentLength = distance(start, end);
+    if (walked + segmentLength >= targetDistance || index === points.length - 1) {
+      return normalize(sub(end, start));
+    }
+    walked += segmentLength;
+  }
+  return normalize(sub(points[points.length - 1], points[0]));
+}
+
+function sampleT(index: number, count: number, spacingMode: SpacingMode): number {
+  if (count <= 1) {
+    return 0.5;
+  }
+  const margin = spacingMode === "loose" ? 0.04 : spacingMode === "tight" ? 0.22 : 0.12;
+  return lerp(margin, 1 - margin, index / (count - 1));
+}
+
+function chooseFacingNormal(
+  tangent: Vec2,
+  point: Vec2,
+  enemyCentroid: Vec2 | undefined,
+  side: SideId,
+): number {
+  const normalA = normalize({ x: tangent.y, y: -tangent.x });
+  const normalB = scale(normalA, -1);
+  const desired = enemyCentroid ? normalize(sub(enemyCentroid, point)) : side === "rome" ? { x: 0, y: 1 } : { x: 0, y: -1 };
+  return angleOf(dot(normalA, desired) >= dot(normalB, desired) ? normalA : normalB);
+}
+
+function intendedDimensions(formation: Formation, options: LineIntentOptions): { width: number; depth: number } {
+  if (options.depthMode === "deep") {
+    // The visual slot relayout is still owned by formation setup; this records the intended shape for ghosts.
+    return { width: formation.width * 0.82, depth: formation.depth * 1.24 };
+  }
+  if (options.depthMode === "thin") {
+    return { width: formation.width * 1.12, depth: formation.depth * 0.88 };
+  }
+  return { width: formation.width, depth: formation.depth };
 }

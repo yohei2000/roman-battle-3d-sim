@@ -58,6 +58,7 @@ function makeFormation(
     state: "holding",
     currentEngagementIds: [],
     selected: false,
+    carefulAlignment: false,
     slotOffsets: [],
     soldierSeeds,
     visualState: "brace",
