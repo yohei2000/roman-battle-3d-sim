@@ -246,18 +246,25 @@ input {
 
 .command-lens {
   position: absolute;
-  left: 50%;
+  right: max(10px, env(safe-area-inset-right));
   bottom: max(14px, env(safe-area-inset-bottom));
   z-index: 5;
-  width: min(620px, calc(100% - 20px));
-  transform: translateX(-50%);
+  width: auto;
   display: grid;
   gap: 8px;
   pointer-events: auto;
 }
 
+.command-lens.is-open {
+  left: 50%;
+  right: auto;
+  width: min(620px, calc(100% - 20px));
+  transform: translateX(-50%);
+}
+
 .command-lens button {
   min-height: 46px;
+  min-width: 112px;
   border: 1px solid rgba(255, 232, 168, 0.36);
   border-radius: 8px;
   background: rgba(14, 22, 24, 0.88);
@@ -270,6 +277,11 @@ input {
   min-height: 54px;
   background: rgba(96, 81, 44, 0.92);
   font-size: 18px;
+}
+
+.command-lens.is-open .lens-primary,
+.command-lens.is-open button {
+  min-width: 0;
 }
 
 .lens-tools,
@@ -301,9 +313,10 @@ input {
 @media (max-width: 760px) {
   .hud {
     grid-template-columns: 1fr;
-    grid-template-rows: auto auto 1fr auto;
+    grid-template-rows: auto auto 1fr;
+    align-content: start;
     padding: 8px;
-    gap: 8px;
+    gap: 6px;
   }
 
   .command-bar {
@@ -312,54 +325,69 @@ input {
     width: 100%;
     grid-auto-flow: unset;
     grid-template-columns: repeat(4, minmax(0, 1fr));
+    padding: 6px;
+    background: rgba(11, 18, 20, 0.54);
+    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.18);
   }
 
   .command-bar button {
     min-width: 0;
-    height: 34px;
+    height: 32px;
     font-size: 12px;
   }
 
-  .selected-panel {
-    grid-column: 1;
-    grid-row: 2;
-    width: 100%;
-    min-height: 0;
-    max-height: 210px;
-    overflow: auto;
+  .selected-panel,
+  .debug-panel,
+  .event-list,
+  .metrics-panel {
+    display: none;
   }
 
   .intent-panel {
     grid-column: 1;
-    grid-row: 3;
-    justify-self: stretch;
-    width: 100%;
+    grid-row: 2;
+    justify-self: start;
+    width: auto;
+    max-width: min(270px, calc(100% - 18px));
+    padding: 6px 8px;
+    font-size: 11px;
+    background: rgba(11, 18, 20, 0.52);
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.16);
   }
 
-  .debug-panel {
-    grid-column: 1;
-    grid-row: 5;
-    justify-self: stretch;
+  .intent-panel .stat-row {
+    min-height: 18px;
   }
 
-  .event-list {
+  .intent-panel .stat-row:first-child,
+  .intent-panel .stat-row:nth-child(3) {
     display: none;
   }
 
-  .metrics-panel {
-    grid-column: 1;
-    grid-row: 5;
-    justify-self: stretch;
-    white-space: normal;
-    margin-top: 54px;
-    margin-bottom: 188px;
+  .intent-hint,
+  .intent-status {
+    margin-top: 4px;
   }
 
   .command-lens {
+    right: max(8px, env(safe-area-inset-right));
+    bottom: max(8px, env(safe-area-inset-bottom));
+  }
+
+  .command-lens.is-open {
     width: calc(100% - 14px);
   }
 
   .lens-tools {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .command-lens button {
+    min-height: 40px;
+  }
+
+  .command-lens .lens-primary {
+    min-height: 46px;
+    font-size: 16px;
   }
 }

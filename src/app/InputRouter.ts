@@ -371,6 +371,7 @@ export class InputRouter {
 
   private renderLens(): void {
     this.lens.innerHTML = "";
+    this.lens.classList.toggle("is-open", this.lensOpen || this.pendingConfirm);
     const toggle = document.createElement("button");
     toggle.type = "button";
     toggle.className = "lens-primary";
