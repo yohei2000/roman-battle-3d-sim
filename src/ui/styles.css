@@ -1,0 +1,271 @@
+:root {
+  color-scheme: dark;
+  font-family:
+    Inter, "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  background: #0e1416;
+  color: #edf4ef;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.battle-canvas,
+.debug-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.battle-canvas {
+  cursor: crosshair;
+}
+
+.debug-overlay {
+  pointer-events: none;
+}
+
+.hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) 1fr minmax(260px, 420px);
+  grid-template-rows: auto 1fr auto;
+  gap: 12px;
+  padding: 12px;
+}
+
+.panel,
+.command-bar,
+.event-list {
+  pointer-events: auto;
+  background: rgba(11, 18, 20, 0.78);
+  border: 1px solid rgba(225, 236, 226, 0.15);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.24);
+  backdrop-filter: blur(8px);
+}
+
+.command-bar {
+  grid-column: 2;
+  justify-self: center;
+  display: grid;
+  grid-auto-flow: column;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 8px;
+}
+
+.command-bar button {
+  min-width: 84px;
+  height: 36px;
+  border: 1px solid rgba(255, 232, 168, 0.42);
+  border-radius: 6px;
+  background: rgba(42, 56, 52, 0.9);
+  color: #f7f0d8;
+  cursor: pointer;
+}
+
+.command-bar button:hover:not(:disabled),
+.command-bar button:focus-visible {
+  background: rgba(95, 90, 61, 0.95);
+  outline: none;
+}
+
+.command-bar button:disabled {
+  color: rgba(238, 245, 238, 0.35);
+  border-color: rgba(238, 245, 238, 0.12);
+  cursor: default;
+}
+
+.selected-panel {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  align-self: start;
+  border-radius: 8px;
+  padding: 12px;
+  min-height: 220px;
+}
+
+.metrics-panel {
+  grid-column: 2 / 4;
+  grid-row: 3;
+  justify-self: end;
+  max-width: min(760px, 100%);
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: #d8e3dc;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.debug-panel {
+  grid-column: 3;
+  grid-row: 1;
+  justify-self: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  align-items: center;
+  max-width: 360px;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.event-list {
+  grid-column: 3;
+  grid-row: 2;
+  align-self: end;
+  justify-self: end;
+  width: min(420px, 100%);
+  max-height: 180px;
+  overflow: hidden;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: #dce7df;
+}
+
+.event-list div {
+  display: grid;
+  grid-template-columns: 38px 1fr;
+  gap: 6px;
+  padding: 2px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.event-list div:last-child {
+  border-bottom: 0;
+}
+
+.event-list span {
+  color: #a6c6bd;
+}
+
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+  min-height: 24px;
+}
+
+.stat-row span {
+  color: #9fb5ad;
+}
+
+.stat-row strong {
+  color: #f0f6ef;
+  text-align: right;
+  font-weight: 650;
+}
+
+.meter-row {
+  margin: 7px 0;
+}
+
+.meter-label .stat-row {
+  min-height: 18px;
+}
+
+.meter {
+  width: 100%;
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(230, 239, 232, 0.11);
+  overflow: hidden;
+}
+
+.meter div {
+  height: 100%;
+  border-radius: inherit;
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: #dce5df;
+  user-select: none;
+}
+
+.toggle input {
+  width: 15px;
+  height: 15px;
+  accent-color: #ffcf7a;
+}
+
+.drag-rect {
+  position: absolute;
+  display: none;
+  pointer-events: none;
+  border: 1px solid rgba(255, 211, 106, 0.9);
+  background: rgba(255, 211, 106, 0.12);
+}
+
+@media (max-width: 760px) {
+  .hud {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto 1fr auto;
+    padding: 8px;
+    gap: 8px;
+  }
+
+  .command-bar {
+    grid-column: 1;
+    grid-row: 1;
+    width: 100%;
+    grid-auto-flow: unset;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .command-bar button {
+    min-width: 0;
+    height: 34px;
+    font-size: 12px;
+  }
+
+  .selected-panel {
+    grid-column: 1;
+    grid-row: 2;
+    width: 100%;
+    min-height: 0;
+    max-height: 210px;
+    overflow: auto;
+  }
+
+  .debug-panel {
+    grid-column: 1;
+    grid-row: 4;
+    justify-self: stretch;
+  }
+
+  .event-list {
+    display: none;
+  }
+
+  .metrics-panel {
+    grid-column: 1;
+    grid-row: 4;
+    justify-self: stretch;
+    white-space: normal;
+    margin-top: 54px;
+  }
+}
