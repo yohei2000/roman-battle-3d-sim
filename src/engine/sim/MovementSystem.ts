@@ -11,6 +11,7 @@ import {
 import { SIM_CONFIG } from "./SimConfig";
 import type { TerrainField } from "./TerrainField";
 import type { Formation } from "./SimTypes";
+import { roleTraits } from "./ComplexityModel";
 
 export class MovementSystem {
   update(formations: Formation[], terrain: TerrainField, dt: number): void {
@@ -35,7 +36,11 @@ export class MovementSystem {
 
       if (isPinned) {
         formation.fatigue = clamp(formation.fatigue + dt * 0.025, 0, 1);
-        formation.pressure = clamp(formation.pressure + dt * 0.012, 0, 1.4);
+        formation.pressure = clamp(
+          formation.pressure + dt * 0.012 * (1 - roleTraits(formation.role).pressureResistance),
+          0,
+          1.4,
+        );
         formation.state = "engaged";
         continue;
       }
@@ -44,7 +49,8 @@ export class MovementSystem {
       const wantsToMove = remainingDistance > 0.75 && formation.intent !== "hold" && formation.intent !== "reform";
 
       if (wantsToMove) {
-        this.moveToward(formation, formation.targetCenter, dt, terrainSample.moveCost, false);
+        const objectiveMoveBonus = formation.objectiveSupport > 0 ? 1 + formation.objectiveSupport * 0.35 : 1;
+        this.moveToward(formation, formation.targetCenter, dt, terrainSample.moveCost / objectiveMoveBonus, false);
         formation.state = formation.intent === "advance" ? "moving" : "moving";
         formation.fatigue = clamp(formation.fatigue + dt * (0.02 + terrainSample.moveCost * 0.012), 0, 1);
         const cohesionScale = formation.carefulAlignment ? 0.55 : 1;
@@ -55,7 +61,10 @@ export class MovementSystem {
           formation.arrivalIntent = undefined;
           formation.carefulAlignment = false;
         }
-        const recoveryScale = formation.intent === "reform" ? 1.8 : 1;
+        const recoveryScale =
+          (formation.intent === "reform" ? 1.8 : 1) *
+          roleTraits(formation.role).cohesionRecovery *
+          (1 + formation.objectiveSupport * 0.45);
         formation.state = formation.intent === "reform" ? "reforming" : formation.intent === "hold" ? "holding" : "idle";
         formation.cohesion = clamp(
           formation.cohesion + SIM_CONFIG.cohesionRecoveryRate * recoveryScale * dt,
@@ -67,7 +76,7 @@ export class MovementSystem {
         formation.panic = clamp(formation.panic - 0.025 * recoveryScale * dt, 0, 1.2);
       }
 
-      const facingStep = formation.turnRate * dt * (wantsToMove ? 0.75 : 1);
+      const facingStep = formation.turnRate * roleTraits(formation.role).turnRate * dt * (wantsToMove ? 0.75 : 1);
       const oldFacing = formation.facing;
       formation.facing = moveAngleToward(formation.facing, formation.targetFacing, facingStep);
       const turnAmount = Math.abs(oldFacing - formation.facing);
@@ -102,7 +111,10 @@ export class MovementSystem {
     const direction = normalize(offset);
     const speedScale = routing
       ? SIM_CONFIG.routingSpeedScale
-      : (1 - formation.fatigue * 0.32 + formation.cohesion * 0.18) * (formation.carefulAlignment ? 0.86 : 1);
+      : (1 - formation.fatigue * 0.32 + formation.cohesion * 0.18) *
+        (formation.carefulAlignment ? 0.86 : 1) *
+        roleTraits(formation.role).speed *
+        (formation.role === "reserve" && !formation.reserveReleased ? 0.72 : 1);
     const maxStep = (formation.speed * speedScale * dt) / moveCost;
     const step = Math.min(maxStep, remaining);
     const delta = scale(direction, step);

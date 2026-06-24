@@ -10,6 +10,7 @@ import { FormationRenderer } from "../engine/render/FormationRenderer";
 import { DebugOverlayRenderer } from "../engine/render/DebugOverlayRenderer";
 import { EffectsRenderer } from "../engine/render/EffectsRenderer";
 import { IntentRenderer } from "../engine/render/IntentRenderer";
+import { ObjectiveRenderer } from "../engine/render/ObjectiveRenderer";
 import { CameraRig } from "../engine/render/CameraRig";
 import { Hud } from "../ui/Hud";
 
@@ -23,6 +24,7 @@ export class App {
   private readonly formations: FormationRenderer;
   private readonly effects: EffectsRenderer;
   private readonly intents: IntentRenderer;
+  private readonly objectives: ObjectiveRenderer;
   private readonly overlay: DebugOverlayRenderer;
   private readonly hud: Hud;
   private readonly loop: GameLoop;
@@ -39,6 +41,7 @@ export class App {
     this.formations = new FormationRenderer(this.sceneRoot.scene, this.world.terrain);
     this.effects = new EffectsRenderer(this.sceneRoot.scene, this.world.terrain);
     this.intents = new IntentRenderer(this.sceneRoot.scene, this.world.terrain);
+    this.objectives = new ObjectiveRenderer(this.sceneRoot.scene, this.world.terrain);
     this.overlay = new DebugOverlayRenderer(root, this.camera);
     this.hud = new Hud(root, this.world);
     this.input = new InputRouter(this.renderer.domElement, this.camera, this.world, root);
@@ -65,6 +68,7 @@ export class App {
     this.formations.update(snapshot.formations);
     this.effects.update(snapshot);
     this.intents.update(this.world.intentSnapshot(), gesturePreview);
+    this.objectives.update(snapshot.objectives);
     this.renderer.render(this.sceneRoot.scene, this.camera.camera);
     this.overlay.render(snapshot, this.world.debugFlags);
     this.hud.update(snapshot, this.loop.metrics, this.renderer.stats(this.loop.metrics), gesturePreview);

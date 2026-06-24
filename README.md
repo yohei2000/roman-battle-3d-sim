@@ -2,7 +2,7 @@
 
 A deployable vertical slice of a formation-level ancient melee battle simulator built from scratch with Vite, TypeScript, three.js, and DOM/CSS HUD controls.
 
-The simulation treats formations, contact lanes, morale, cohesion, fatigue, pressure, discipline, panic, and engagement phases as the combat authority. Soldiers are rendered as low-poly procedural instanced visuals that follow formation slots.
+The simulation treats formations, command focus, battlefield objectives, formation roles, reserves, contact lanes, morale, cohesion, fatigue, pressure, discipline, panic, collapse reasons, and engagement phases as the combat authority. Soldiers are rendered as low-poly procedural instanced visuals that follow formation slots.
 
 ## Commands
 
@@ -19,10 +19,10 @@ npm.cmd run preview
 
 - One tap: select a friendly formation.
 - `作戦`: open the Command Lens.
-- `Frontline`: draw a battle line with one finger, release to preview, then `Confirm`.
-- `Pressure`: draw a pressure stroke to encourage earlier surges at extra fatigue/cohesion cost.
-- `Standard`: tap a standard position, preview its morale/discipline aura, then `Confirm`.
-- `Fallback`: draw a dashed fallback line for ordered retreat/reform intent.
+- `Draw`: `Frontline`, `Pressure`, and `Fallback` use one-finger draw, release-to-preview, then `Confirm`.
+- `Control`: place `Standard`, commit `Reserve`, focus an `Objective`, or change selected formation role.
+- `Doctrine`: choose `Hold & Absorb`, `Refuse Flank`, `Center Push`, or `Flexible Reserve`.
+- `commandFocus`: every strong intent spends focus; standards, objectives, doctrine, and battle disorder change recovery.
 - Preview controls: `Confirm`, `Cancel`, `Undo`.
 - Two fingers: pan camera, pinch zoom, twist rotate.
 
@@ -51,7 +51,7 @@ npm.cmd run preview
 - `reports/eval/latest.json`
 - `reports/eval/latest.md`
 
-The suite compares NoOp, Frontal Attack, Draw Frontline, Pressure, and Fallback agents across balanced, angled/flank, and disordered scenarios.
+The suite compares NoOp, Frontal Attack, Draw Frontline, Reserve Timing, Objective Focus, and Doctrine Mix agents across balanced frontal, flank opportunity, objective race, reserve rescue, and disordered-start scenarios. It scores Tactical Agency, Meaningful Tradeoff, Strategic Diversity, Legibility, Mobile Operability, Pacing, and Performance, then reports which complexity systems were effective, weak, or overstrong.
 
 ## Deployment
 

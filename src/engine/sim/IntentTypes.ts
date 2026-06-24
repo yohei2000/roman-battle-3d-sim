@@ -7,6 +7,8 @@ export type InputMode =
   | "paint_pressure"
   | "place_standard"
   | "draw_fallback"
+  | "release_reserve"
+  | "focus_objective"
   | "set_contingency";
 
 export type IntentKind =
@@ -14,6 +16,8 @@ export type IntentKind =
   | "pressure_stroke"
   | "standard"
   | "fallback_line"
+  | "reserve"
+  | "objective_focus"
   | "contingency";
 
 export type FormationId = string;
@@ -83,6 +87,26 @@ export interface FallbackLine {
   createdAt: number;
 }
 
+export interface ReserveIntent {
+  id: number;
+  kind: "reserve";
+  side: SideId;
+  condition: "manual" | "friendly_rupture" | "enemy_routing" | "flank_exposed";
+  formationIds: FormationId[];
+  target?: Vec2;
+  createdAt: number;
+}
+
+export interface ObjectiveFocusIntent {
+  id: number;
+  kind: "objective_focus";
+  side: SideId;
+  objectiveId: string;
+  position: Vec2;
+  formationIds: FormationId[];
+  createdAt: number;
+}
+
 export interface ContingencyIntent {
   id: number;
   kind: "contingency";
@@ -100,6 +124,8 @@ export type TacticalIntent =
   | PressureStroke
   | Standard
   | FallbackLine
+  | ReserveIntent
+  | ObjectiveFocusIntent
   | ContingencyIntent;
 
 export interface IntentSnapshot {
@@ -108,6 +134,8 @@ export interface IntentSnapshot {
   pressureStrokes: PressureStroke[];
   standards: Standard[];
   fallbackLines: FallbackLine[];
+  reserveIntents: ReserveIntent[];
+  objectiveFocuses: ObjectiveFocusIntent[];
   revision: number;
   lastStatus?: string;
 }

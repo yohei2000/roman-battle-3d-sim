@@ -284,16 +284,28 @@ input {
   min-width: 0;
 }
 
+.lens-tabs,
 .lens-tools,
-.lens-actions {
+.lens-actions,
+.lens-roles,
+.lens-doctrines {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
   padding: 8px;
   border-radius: 8px;
   background: rgba(9, 15, 17, 0.82);
   border: 1px solid rgba(225, 236, 226, 0.13);
   backdrop-filter: blur(8px);
+}
+
+.lens-tabs {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.lens-tools,
+.lens-roles,
+.lens-doctrines {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .lens-actions {
@@ -359,8 +371,8 @@ input {
     min-height: 18px;
   }
 
-  .intent-panel .stat-row:first-child,
-  .intent-panel .stat-row:nth-child(3) {
+  .intent-panel .stat-row:nth-child(4),
+  .intent-panel .stat-row:nth-child(5) {
     display: none;
   }
 
@@ -382,8 +394,17 @@ input {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
+  .lens-roles {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .lens-doctrines {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .command-lens button {
-    min-height: 40px;
+    min-height: 44px;
+    font-size: 12px;
   }
 
   .command-lens .lens-primary {

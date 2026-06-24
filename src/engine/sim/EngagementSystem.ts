@@ -14,10 +14,12 @@ import { frontCenter, orientedBoxesOverlap, type OrientedBox } from "../math/Geo
 import type { Rng } from "../math/Rng";
 import { SIM_CONFIG } from "./SimConfig";
 import type { ContactLane, Engagement, Formation, SimEvent } from "./SimTypes";
+import type { BattleDoctrine } from "./SimTypes";
 import type { TerrainField } from "./TerrainField";
 import { SpatialGrid } from "./SpatialGrid";
 import type { IntentSystem } from "./IntentSystem";
 import type { TelemetryCollector } from "./Telemetry";
+import { doctrineTraits, roleTraits } from "./ComplexityModel";
 
 export class EngagementSystem {
   private readonly grid = new SpatialGrid();
@@ -36,6 +38,7 @@ export class EngagementSystem {
     events: SimEvent[],
     intentSystem?: IntentSystem,
     telemetry?: TelemetryCollector,
+    doctrine: BattleDoctrine = "flexible_reserve",
   ): void {
     const activeIds = new Set<string>();
 
@@ -58,7 +61,7 @@ export class EngagementSystem {
       activeIds.add(id);
       const engagement = this.engagements.get(id) ?? this.createEngagement(id, a, b, time, rng);
       engagement.contactLanes = this.buildContactLanes(engagement, a, b, terrain);
-      this.updateEngagementPhase(engagement, a, b, rng, time, dt, events, intentSystem, telemetry);
+      this.updateEngagementPhase(engagement, a, b, rng, time, dt, events, intentSystem, telemetry, doctrine);
       this.engagements.set(id, engagement);
       a.currentEngagementIds.push(id);
       b.currentEngagementIds.push(id);
@@ -165,14 +168,17 @@ export class EngagementSystem {
     events: SimEvent[],
     intentSystem?: IntentSystem,
     telemetry?: TelemetryCollector,
+    doctrine: BattleDoctrine = "flexible_reserve",
   ): void {
     const inContact =
       orientedBoxesOverlap(formationBox(a), formationBox(b), SIM_CONFIG.engagementContactPadding) ||
       distance(a.center, b.center) <
         SIM_CONFIG.engagementNearDistance + a.depth * 0.5 + b.depth * 0.5;
     const lanePressure = average(engagement.contactLanes.map((lane) => lane.intensity));
-    engagement.pressureA = lanePressure * (1 + b.discipline * 0.25 + a.flankThreat * 0.35);
-    engagement.pressureB = lanePressure * (1 + a.discipline * 0.25 + b.flankThreat * 0.35);
+    engagement.pressureA =
+      lanePressure * (1 + b.discipline * 0.25 + a.flankThreat * 0.35) * (1 - roleTraits(a.role).pressureResistance * 0.5);
+    engagement.pressureB =
+      lanePressure * (1 + a.discipline * 0.25 + b.flankThreat * 0.35) * (1 - roleTraits(b.role).pressureResistance * 0.5);
     const intentA = intentSystem?.getInfluenceForFormation(a.side, a.center);
     const intentB = intentSystem?.getInfluenceForFormation(b.side, b.center);
     const pressureA = intentA?.pressureStrength ?? 0;
@@ -190,15 +196,23 @@ export class EngagementSystem {
     }
 
     if (engagement.phase === "standoff") {
-      a.pressure = clamp(a.pressure + dt * SIM_CONFIG.standoffPressureRate * (1 + a.flankThreat), 0, 1.4);
-      b.pressure = clamp(b.pressure + dt * SIM_CONFIG.standoffPressureRate * (1 + b.flankThreat), 0, 1.4);
+      a.pressure = clamp(
+        a.pressure + dt * SIM_CONFIG.standoffPressureRate * (1 + a.flankThreat) * (1 - roleTraits(a.role).pressureResistance),
+        0,
+        1.4,
+      );
+      b.pressure = clamp(
+        b.pressure + dt * SIM_CONFIG.standoffPressureRate * (1 + b.flankThreat) * (1 - roleTraits(b.role).pressureResistance),
+        0,
+        1.4,
+      );
       a.fatigue = clamp(a.fatigue + dt * (0.018 + pressureA * 0.018), 0, 1);
       b.fatigue = clamp(b.fatigue + dt * (0.018 + pressureB * 0.018), 0, 1);
       a.cohesion = clamp(a.cohesion - dt * (0.01 + pressureA * 0.006) * (1 + a.flankThreat), 0, 1);
       b.cohesion = clamp(b.cohesion - dt * (0.01 + pressureB * 0.006) * (1 + b.flankThreat), 0, 1);
       const pressureHaste = Math.max(pressureA, pressureB) * 1.2;
       if (time >= engagement.nextSurgeAt - pressureHaste) {
-        this.resolveSurge(engagement, a, b, rng, time, events, pressureA, pressureB, telemetry);
+        this.resolveSurge(engagement, a, b, rng, time, events, pressureA, pressureB, telemetry, doctrine);
       }
       return;
     }
@@ -245,12 +259,14 @@ export class EngagementSystem {
     pressureA: number,
     pressureB: number,
     telemetry?: TelemetryCollector,
+    doctrine: BattleDoctrine = "flexible_reserve",
   ): void {
+    const trait = doctrineTraits(doctrine);
     let scoreA = 0;
     let scoreB = 0;
     for (const lane of engagement.contactLanes) {
-      scoreA += surgePower(a, lane.aDensity, lane.flankFactorA, lane.terrainFactor, rng, pressureA);
-      scoreB += surgePower(b, lane.bDensity, lane.flankFactorB, lane.terrainFactor, rng, pressureB);
+      scoreA += surgePower(a, lane.aDensity, lane.flankFactorA, lane.terrainFactor, rng, pressureA, a.side === "rome" ? trait.surge : 1);
+      scoreB += surgePower(b, lane.bDensity, lane.flankFactorB, lane.terrainFactor, rng, pressureB, b.side === "rome" ? trait.surge : 1);
     }
     engagement.localAdvantageA = scoreA / Math.max(0.001, scoreB);
     engagement.localAdvantageB = scoreB / Math.max(0.001, scoreA);
@@ -364,6 +380,7 @@ function surgePower(
   terrainFactor: number,
   rng: Rng,
   pressureIntent = 0,
+  doctrineSurge = 1,
 ): number {
   const troopQuality = 0.78 + formation.discipline * 0.42;
   const cohesionFactor = 0.42 + formation.cohesion * 0.88;
@@ -377,6 +394,7 @@ function surgePower(
   const pressurePenalty = saturate(formation.pressure / 1.4) * 0.28;
   const flankExposurePenalty = flankFactorValue * 0.3;
   const pressureBonus = 1 + pressureIntent * 0.12;
+  const roleBonus = roleTraits(formation.role).surge;
   return (
     troopQuality *
       cohesionFactor *
@@ -387,6 +405,8 @@ function surgePower(
       facingFactor *
       localSupportFactor *
       pressureBonus *
+      roleBonus *
+      doctrineSurge *
       randomNoise -
     fatiguePenalty -
     pressurePenalty -

@@ -6,6 +6,7 @@ import type {
   GesturePreview,
   IntentSnapshot,
   LineIntent,
+  ObjectiveFocusIntent,
   PressureStroke,
   Standard,
 } from "../sim/IntentTypes";
@@ -40,6 +41,9 @@ export class IntentRenderer {
     for (const fallback of snapshot.fallbackLines) {
       this.addFallback(fallback, false);
     }
+    for (const objective of snapshot.objectiveFocuses) {
+      this.addObjectiveFocus(objective, false);
+    }
 
     if (preview.active) {
       this.addPreview(preview);
@@ -73,6 +77,8 @@ export class IntentRenderer {
       this.addEndpoints(preview.points, 0x8ef2a0);
     } else if (preview.tool === "standard" && preview.position) {
       this.addCircle(preview.position, preview.radius ?? 22, 0xf6e27c, 0.48, true);
+    } else if (preview.tool === "objective_focus" && preview.position) {
+      this.addCircle(preview.position, 12, 0x76d7ff, 0.46, true);
     }
   }
 
@@ -86,6 +92,10 @@ export class IntentRenderer {
 
   private addFallback(intent: FallbackLine, preview: boolean): void {
     this.addLine(intent.points, 0x8ef2a0, true, preview ? 0.78 : 0.5);
+  }
+
+  private addObjectiveFocus(intent: ObjectiveFocusIntent, preview: boolean): void {
+    this.addCircle(intent.position, 10, 0x76d7ff, preview ? 0.58 : 0.34, true);
   }
 
   private addLine(

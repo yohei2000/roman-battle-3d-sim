@@ -1,14 +1,15 @@
 import { Rng, hashStringSeed } from "../engine/math/Rng";
-import type { Formation } from "../engine/sim/SimTypes";
+import type { Formation, FormationRole } from "../engine/sim/SimTypes";
 
 export function createDefaultScenario(): Formation[] {
   const formations: Formation[] = [
-    makeFormation("rome-left", "I Cohort Left", "rome", -24, -32, 0, 18, 11, 12, 9, 0.72),
-    makeFormation("rome-center", "I Cohort Center", "rome", 0, -34, 0, 19, 11, 13, 9, 0.78),
-    makeFormation("rome-right", "I Cohort Right", "rome", 24, -32, 0, 18, 11, 12, 9, 0.72),
-    makeFormation("opp-left", "Opposition Left", "opposition", -27, 34, Math.PI, 18, 11, 12, 9, 0.66),
-    makeFormation("opp-center", "Opposition Center", "opposition", 0, 36, Math.PI, 20, 11, 13, 9, 0.7),
-    makeFormation("opp-right", "Opposition Right", "opposition", 27, 34, Math.PI, 18, 11, 12, 9, 0.66),
+    makeFormation("rome-left", "I Cohort Left", "rome", "wing", -24, -32, 0, 18, 11, 12, 9, 0.72),
+    makeFormation("rome-center", "I Cohort Center", "rome", "center", 0, -34, 0, 19, 11, 13, 9, 0.78),
+    makeFormation("rome-right", "I Cohort Right", "rome", "wing", 24, -32, 0, 18, 11, 12, 9, 0.72),
+    makeFormation("rome-reserve", "Triarii Reserve", "rome", "reserve", 0, -53, 0, 16, 10, 11, 8, 0.76),
+    makeFormation("opp-left", "Opposition Left", "opposition", "wing", -27, 34, Math.PI, 18, 11, 12, 9, 0.66),
+    makeFormation("opp-center", "Opposition Center", "opposition", "center", 0, 36, Math.PI, 20, 11, 13, 9, 0.7),
+    makeFormation("opp-right", "Opposition Right", "opposition", "wing", 27, 34, Math.PI, 18, 11, 12, 9, 0.66),
   ];
 
   return formations;
@@ -18,6 +19,7 @@ function makeFormation(
   id: string,
   name: string,
   side: Formation["side"],
+  role: FormationRole,
   x: number,
   z: number,
   facing: number,
@@ -36,6 +38,8 @@ function makeFormation(
     name,
     side,
     archetype: "heavy_infantry",
+    role,
+    reserveReleased: role !== "reserve",
     center: { x, y: z },
     facing,
     width,
@@ -53,6 +57,8 @@ function makeFormation(
     panic: 0.03,
     intentPressure: 0,
     standardInfluence: 0,
+    reserveRelief: 0,
+    objectiveSupport: 0,
     commandDelay: 0,
     speed: side === "rome" ? 5.6 : 5.9,
     turnRate: side === "rome" ? 1.35 : 1.25,
@@ -67,5 +73,6 @@ function makeFormation(
     routeDirection: { x: side === "rome" ? -0.1 : 0.1, y: side === "rome" ? -1 : 1 },
     lastThreatDirection: { x: 0, y: side === "rome" ? 1 : -1 },
     flankThreat: 0,
+    collapseReason: undefined,
   };
 }

@@ -3,6 +3,7 @@ import type { RenderStats } from "../engine/render/Renderer";
 import type { GesturePreview } from "../engine/sim/IntentTypes";
 import type { DebugFlags, FormationIntent, SimSnapshot } from "../engine/sim/SimTypes";
 import type { SimWorld } from "../engine/sim/SimWorld";
+import { doctrineLabel } from "../engine/sim/ComplexityModel";
 
 export class Hud {
   private readonly selectedPanel: HTMLDivElement;
@@ -69,6 +70,7 @@ export class Hud {
         )?.phase ?? "none";
       this.selectedPanel.append(
         row("Selected", selected.length === 1 ? primary.name : `${selected.length} formations`),
+        row("Role", `${primary.role}${primary.role === "reserve" && !primary.reserveReleased ? " (held)" : ""}`),
         row("State", `${primary.state} / ${phase}`),
         meter("Morale", primary.morale, "#78d38b"),
         meter("Cohesion", primary.cohesion, "#76b7ff"),
@@ -83,11 +85,23 @@ export class Hud {
     this.intentPanel.innerHTML = "";
     const intentSnapshot = this.world.intentSnapshot();
     const intentCount = intentSnapshot.intents.length;
+    const focus = snapshot.commandFocus;
+    const ownedObjectives = snapshot.objectives.filter((objective) => objective.owner === "rome").length;
+    const contestedObjectives = snapshot.objectives.filter((objective) => objective.contested).length;
+    const collapse = snapshot.collapseReasons[snapshot.collapseReasons.length - 1];
     this.intentPanel.append(
-      row("Input", gesturePreview.inputProfile ?? "desktop"),
+      row("Focus", `${focus.current.toFixed(0)} / ${focus.max} (+${focus.recoveryRate.toFixed(1)}/s)`),
       row("Mode", modeLabel(gesturePreview.mode)),
+      row("Doctrine", doctrineLabel(snapshot.doctrine)),
+      row("Objectives", `${ownedObjectives}/${snapshot.objectives.length}${contestedObjectives ? ` (${contestedObjectives} contested)` : ""}`),
       row("Intents", `${intentCount}`),
     );
+    if (collapse) {
+      const reason = document.createElement("div");
+      reason.className = "intent-status collapse-reason";
+      reason.textContent = `${collapse.formationId}: ${collapse.reason}`;
+      this.intentPanel.appendChild(reason);
+    }
     if (gesturePreview.mode !== "select") {
       const hint = document.createElement("div");
       hint.className = "intent-hint";
@@ -190,6 +204,8 @@ function modeLabel(mode: GesturePreview["mode"]): string {
   if (mode === "paint_pressure") return "Paint Pressure";
   if (mode === "place_standard") return "Place Standard";
   if (mode === "draw_fallback") return "Draw Fallback";
+  if (mode === "release_reserve") return "Release Reserve";
+  if (mode === "focus_objective") return "Focus Objective";
   if (mode === "set_contingency") return "Set Contingency";
   return "Select";
 }

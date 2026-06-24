@@ -10,7 +10,16 @@ export type TelemetryKind =
   | "rout"
   | "battle_result"
   | "invalid_command"
-  | "pointercancel";
+  | "pointercancel"
+  | "command_focus_spent"
+  | "command_focus_recovered"
+  | "role_changed"
+  | "reserve_committed"
+  | "objective_captured"
+  | "objective_lost"
+  | "doctrine_selected"
+  | "collapse_reason_recorded"
+  | "standard_effect_applied";
 
 export interface TelemetryEvent {
   time: number;

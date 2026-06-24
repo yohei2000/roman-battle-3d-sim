@@ -1,6 +1,6 @@
 import { distance, dot, fromAngle, normalize, sub } from "../engine/math/Vec2";
 import { SimWorld } from "../engine/sim/SimWorld";
-import type { EngagementPhase, Formation } from "../engine/sim/SimTypes";
+import type { EngagementPhase, Formation, SideId } from "../engine/sim/SimTypes";
 import type { EvaluationAgent } from "./EvaluationAgent";
 import type { EvaluationMetrics, RunResult, ScenarioDefinition } from "./EvaluationTypes";
 import { cloneFormations } from "./ScenarioSuite";
@@ -38,13 +38,19 @@ export function runAgentScenario(agent: EvaluationAgent, scenario: ScenarioDefin
   const telemetry = world.telemetrySnapshot();
   const final = world.snapshot();
   const finalMorale = sideMorale(final.formations, "rome") - sideMorale(final.formations, "opposition");
+  const commandFocusSpent = sumTelemetry(telemetry, "command_focus_spent", "cost");
+  const commandFocusRecovered = sumTelemetry(telemetry, "command_focus_recovered", "recovered");
+  const objectiveControlTime = final.objectives.reduce((sum, objective) => sum + objective.controlTime.rome, 0);
+  const reserveCommitted = telemetry.filter((event) => event.kind === "reserve_committed").length;
+  const collapseReasonCount = telemetry.filter((event) => event.kind === "collapse_reason_recorded").length;
+  const standardEffectCount = telemetry.filter((event) => event.kind === "standard_effect_applied").length;
   const metrics: EvaluationMetrics = {
     firstContact: phaseTimes.get("standoff") ?? phaseTimes.get("surge"),
     firstSurge: phaseTimes.get("surge"),
     firstRupture: phaseTimes.get("rupture"),
     firstRouting,
     duration: DURATION,
-    winner: winner(final.formations),
+    winner: winner(final.formations, final.objectives),
     commandCount: telemetry.filter((event) => event.kind === "formation_command").length,
     intentCount: telemetry.filter((event) => event.kind === "intent").length,
     lineAdherence: lineAdherence(world),
@@ -54,6 +60,16 @@ export function runAgentScenario(agent: EvaluationAgent, scenario: ScenarioDefin
     routCascade: final.formations.filter((formation) => formation.state === "routing").length,
     casualtyProxy: casualtyProxy(final.formations),
     moraleDelta: finalMorale - initialMorale,
+    commandFocusSpent,
+    commandFocusRecovered,
+    commandFocusEfficiency: commandFocusEfficiency(finalMorale - initialMorale, objectiveControlTime, reserveCommitted, commandFocusSpent),
+    reserveCommitted,
+    reserveValue: reserveValue(final.formations, reserveCommitted, finalMorale - initialMorale),
+    objectiveControlTime,
+    roleUsageDiversity: roleUsageDiversity(final.formations),
+    doctrine: final.doctrine,
+    collapseReasonCount,
+    standardEffectCount,
     stuck: (phaseTimes.get("standoff") ?? Number.POSITIVE_INFINITY) > 34,
     nan,
     outOfBounds,
@@ -77,11 +93,21 @@ function sideMorale(formations: Formation[], side: "rome" | "opposition"): numbe
   );
 }
 
-function winner(formations: Formation[]): "rome" | "opposition" | "draw" {
-  const rome = sideMorale(formations, "rome");
-  const opposition = sideMorale(formations, "opposition");
+function winner(formations: Formation[], objectives: ReturnType<SimWorld["snapshot"]>["objectives"]): "rome" | "opposition" | "draw" {
+  const rome = battleScore(formations, objectives, "rome");
+  const opposition = battleScore(formations, objectives, "opposition");
   if (Math.abs(rome - opposition) < 0.08) return "draw";
   return rome > opposition ? "rome" : "opposition";
+}
+
+function battleScore(
+  formations: Formation[],
+  objectives: ReturnType<SimWorld["snapshot"]>["objectives"],
+  side: SideId,
+): number {
+  const objectiveScore = objectives.reduce((sum, objective) => sum + objective.controlTime[side], 0) / 78;
+  const routPenalty = formations.filter((formation) => formation.side === side && formation.state === "routing").length * 0.13;
+  return sideMorale(formations, side) + objectiveScore * 0.09 - routPenalty;
 }
 
 function lineAdherence(world: SimWorld): number {
@@ -124,4 +150,39 @@ function ruptureRatio(telemetry: ReturnType<SimWorld["telemetrySnapshot"]>): num
 
 function casualtyProxy(formations: Formation[]): number {
   return formations.reduce((sum, formation) => sum + (1 - formation.morale) * 0.4 + (1 - formation.cohesion) * 0.35 + formation.panic * 0.25, 0);
+}
+
+function sumTelemetry(
+  telemetry: ReturnType<SimWorld["telemetrySnapshot"]>,
+  kind: ReturnType<SimWorld["telemetrySnapshot"]>[number]["kind"],
+  key: string,
+): number {
+  return telemetry
+    .filter((event) => event.kind === kind)
+    .reduce((sum, event) => sum + (typeof event.data?.[key] === "number" ? event.data[key] : 0), 0);
+}
+
+function commandFocusEfficiency(
+  moraleDelta: number,
+  objectiveControlTime: number,
+  reserveCommitted: number,
+  spent: number,
+): number {
+  const gain = Math.max(0, moraleDelta + objectiveControlTime / 240 + reserveCommitted * 0.12);
+  return spent <= 0 ? 0 : gain / (spent / 100);
+}
+
+function reserveValue(formations: Formation[], reserveCommitted: number, moraleDelta: number): number {
+  if (reserveCommitted <= 0) {
+    return 0;
+  }
+  const reserveSurvival = formations
+    .filter((formation) => formation.side === "rome" && formation.role === "reserve")
+    .reduce((sum, formation) => sum + formation.morale + formation.cohesion - formation.panic, 0);
+  return Math.max(0, reserveCommitted * 0.35 + reserveSurvival * 0.1 + moraleDelta * 0.4);
+}
+
+function roleUsageDiversity(formations: Formation[]): number {
+  const roles = new Set(formations.filter((formation) => formation.side === "rome").map((formation) => formation.role));
+  return roles.size / 4;
 }

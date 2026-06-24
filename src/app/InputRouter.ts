@@ -14,8 +14,18 @@ import type {
   LineIntentOptions,
   SpacingMode,
 } from "../engine/sim/IntentTypes";
+import type { BattleDoctrine, FormationRole } from "../engine/sim/SimTypes";
 
-type CommandTool = "none" | "frontline" | "pressure_stroke" | "standard" | "fallback_line" | "contingency";
+type CommandTool =
+  | "none"
+  | "frontline"
+  | "pressure_stroke"
+  | "standard"
+  | "fallback_line"
+  | "reserve"
+  | "objective_focus"
+  | "contingency";
+type LensTab = "draw" | "control" | "doctrine";
 
 const DEFAULT_LINE_OPTIONS: LineIntentOptions = {
   spacingMode: "normal",
@@ -30,6 +40,7 @@ export class InputRouter {
   private leftStart?: { screenX: number; screenY: number; world: Vec2 };
   private fHeld = false;
   private activeTool: CommandTool = "none";
+  private lensTab: LensTab = "draw";
   private lensOpen = false;
   private drawing = false;
   private pendingConfirm = false;
@@ -106,11 +117,11 @@ export class InputRouter {
       }
 
       this.leftStart = { screenX: event.clientX, screenY: event.clientY, world };
-      if (this.activeTool === "standard") {
+      if (this.activeTool === "standard" || this.activeTool === "objective_focus") {
         this.previewPosition = world;
-        this.previewStatus = "Standard preview";
+        this.previewStatus = `${toolLabel(this.activeTool)} preview`;
         this.pendingConfirm = true;
-        this.world.recordTelemetry({ kind: "stroke", message: "standard preview" });
+        this.world.recordTelemetry({ kind: "stroke", message: `${this.activeTool} preview` });
         this.renderLens();
       } else if (this.isStrokeTool()) {
         this.beginStroke(world, event);
@@ -280,6 +291,10 @@ export class InputRouter {
       ok = !!this.world.issueFallbackLineForSelection(this.previewPoints);
     } else if (this.activeTool === "standard" && this.previewPosition) {
       ok = !!this.world.placeStandardForSelection(this.previewPosition);
+    } else if (this.activeTool === "reserve") {
+      ok = !!this.world.releaseReserveForSelection("manual");
+    } else if (this.activeTool === "objective_focus") {
+      ok = !!this.world.focusObjectiveForSelection(this.previewPosition);
     } else if (this.activeTool === "contingency") {
       ok = !!this.world.setContingencyForSelection();
     }
@@ -346,6 +361,9 @@ export class InputRouter {
       this.clearPreviewData(false);
     }
     this.previewStatus = tool === "none" ? undefined : `${toolLabel(tool)} ready`;
+    if (tool === "reserve" || tool === "contingency") {
+      this.pendingConfirm = true;
+    }
     this.world.recordTelemetry({ kind: "lens", message: `${tool} selected` });
     this.renderLens();
   }
@@ -355,6 +373,8 @@ export class InputRouter {
     if (this.activeTool === "pressure_stroke") return "paint_pressure";
     if (this.activeTool === "standard") return "place_standard";
     if (this.activeTool === "fallback_line") return "draw_fallback";
+    if (this.activeTool === "reserve") return "release_reserve";
+    if (this.activeTool === "objective_focus") return "focus_objective";
     if (this.activeTool === "contingency") return "set_contingency";
     return "select";
   }
@@ -387,15 +407,28 @@ export class InputRouter {
       return;
     }
 
+    this.renderTabs();
+    if (this.lensTab === "doctrine") {
+      this.renderDoctrineControls();
+      return;
+    }
+
     const tools = document.createElement("div");
     tools.className = "lens-tools";
-    for (const [tool, label] of [
-      ["frontline", "Frontline"],
-      ["pressure_stroke", "Pressure"],
-      ["standard", "Standard"],
-      ["fallback_line", "Fallback"],
-      ["contingency", "Contingency"],
-    ] as Array<[CommandTool, string]>) {
+    const toolEntries: Array<[CommandTool, string]> =
+      this.lensTab === "draw"
+        ? [
+            ["frontline", "Frontline"],
+            ["pressure_stroke", "Pressure"],
+            ["fallback_line", "Fallback"],
+          ]
+        : [
+            ["standard", "Standard"],
+            ["reserve", "Reserve"],
+            ["objective_focus", "Objective"],
+            ["contingency", "Contingency"],
+          ];
+    for (const [tool, label] of toolEntries) {
       const button = document.createElement("button");
       button.type = "button";
       button.textContent = label;
@@ -405,6 +438,10 @@ export class InputRouter {
       tools.appendChild(button);
     }
     this.lens.appendChild(tools);
+
+    if (this.lensTab === "control") {
+      this.renderRoleControls();
+    }
 
     const actions = document.createElement("div");
     actions.className = "lens-actions";
@@ -423,6 +460,77 @@ export class InputRouter {
     undo.addEventListener("click", () => this.undoLastIntent());
     actions.append(confirm, cancel, undo);
     this.lens.appendChild(actions);
+  }
+
+  private renderTabs(): void {
+    const tabs = document.createElement("div");
+    tabs.className = "lens-tabs";
+    for (const [tab, label] of [
+      ["draw", "Draw"],
+      ["control", "Control"],
+      ["doctrine", "Doctrine"],
+    ] as Array<[LensTab, string]>) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = label;
+      button.className = this.lensTab === tab ? "active" : "";
+      button.addEventListener("click", () => {
+        this.lensTab = tab;
+        this.clearPreviewData(false);
+        this.activeTool = "none";
+        this.world.recordTelemetry({ kind: "lens", message: `${tab} tab` });
+        this.renderLens();
+      });
+      tabs.appendChild(button);
+    }
+    this.lens.appendChild(tabs);
+  }
+
+  private renderRoleControls(): void {
+    const roles = document.createElement("div");
+    roles.className = "lens-roles";
+    for (const [role, label] of [
+      ["center", "Center"],
+      ["wing", "Wing"],
+      ["reserve", "Reserve Role"],
+      ["guard", "Guard"],
+    ] as Array<[FormationRole, string]>) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = label;
+      button.disabled = this.pendingConfirm;
+      button.addEventListener("click", () => {
+        const ok = this.world.setRoleForSelection(role);
+        this.previewStatus = ok ? `Role: ${label}` : "Role blocked";
+        this.renderLens();
+      });
+      roles.appendChild(button);
+    }
+    this.lens.appendChild(roles);
+  }
+
+  private renderDoctrineControls(): void {
+    const doctrines = document.createElement("div");
+    doctrines.className = "lens-doctrines";
+    const current = this.world.snapshot().doctrine;
+    for (const [doctrine, label] of [
+      ["hold_absorb", "Hold & Absorb"],
+      ["refuse_flank", "Refuse Flank"],
+      ["center_push", "Center Push"],
+      ["flexible_reserve", "Flexible Reserve"],
+    ] as Array<[BattleDoctrine, string]>) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = label;
+      button.className = current === doctrine ? "active" : "";
+      button.addEventListener("click", () => {
+        const ok = this.world.setDoctrine(doctrine);
+        this.previewStatus = ok ? label : "Low command focus";
+        this.renderLens();
+      });
+      doctrines.appendChild(button);
+    }
+    this.lens.appendChild(doctrines);
   }
 
   private isStrokeTool(): boolean {
@@ -455,6 +563,8 @@ function toolLabel(tool: CommandTool): string {
   if (tool === "pressure_stroke") return "Pressure";
   if (tool === "fallback_line") return "Fallback";
   if (tool === "standard") return "Standard";
+  if (tool === "reserve") return "Reserve";
+  if (tool === "objective_focus") return "Objective";
   if (tool === "contingency") return "Contingency";
   if (tool === "frontline") return "Frontline";
   return "Command";

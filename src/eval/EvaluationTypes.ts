@@ -1,4 +1,4 @@
-import type { Formation } from "../engine/sim/SimTypes";
+import type { BattleDoctrine, Formation } from "../engine/sim/SimTypes";
 
 export interface ScenarioDefinition {
   id: string;
@@ -24,6 +24,16 @@ export interface EvaluationMetrics {
   routCascade: number;
   casualtyProxy: number;
   moraleDelta: number;
+  commandFocusSpent: number;
+  commandFocusRecovered: number;
+  commandFocusEfficiency: number;
+  reserveCommitted: number;
+  reserveValue: number;
+  objectiveControlTime: number;
+  roleUsageDiversity: number;
+  doctrine: BattleDoctrine;
+  collapseReasonCount: number;
+  standardEffectCount: number;
   stuck: boolean;
   nan: boolean;
   outOfBounds: boolean;
@@ -39,12 +49,12 @@ export interface RunResult {
 }
 
 export interface ScoreBreakdown {
-  Mobile: number;
-  Agency: number;
+  "Tactical Agency": number;
+  "Meaningful Tradeoff": number;
+  "Strategic Diversity": number;
   Legibility: number;
+  "Mobile Operability": number;
   Pacing: number;
-  Depth: number;
-  Drama: number;
   Performance: number;
   total: number;
   status: "PASS" | "WARN" | "FAIL";
@@ -59,5 +69,8 @@ export interface EvaluationReport {
     scenarioCount: number;
     agentCount: number;
     bestCreativeAgent: string;
+    effectiveComplexity: string[];
+    weakComplexity: string[];
+    overstrongComplexity: string[];
   };
 }

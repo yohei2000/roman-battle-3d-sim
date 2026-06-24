@@ -2,6 +2,9 @@ import type { Vec2 } from "../math/Vec2";
 
 export type SideId = "rome" | "opposition";
 export type FormationArchetype = "heavy_infantry";
+export type FormationRole = "center" | "wing" | "reserve" | "guard";
+export type BattleDoctrine = "hold_absorb" | "refuse_flank" | "center_push" | "flexible_reserve";
+export type ObjectiveType = "ridge" | "road" | "rally" | "flank_gate";
 export type FormationIntent = "hold" | "advance" | "move" | "reform" | "retreat";
 export type FormationState =
   | "idle"
@@ -59,6 +62,8 @@ export interface Formation {
   name: string;
   side: SideId;
   archetype: FormationArchetype;
+  role: FormationRole;
+  reserveReleased: boolean;
   center: Vec2;
   facing: number;
   width: number;
@@ -76,6 +81,8 @@ export interface Formation {
   panic: number;
   intentPressure: number;
   standardInfluence: number;
+  reserveRelief: number;
+  objectiveSupport: number;
   commandDelay: number;
   speed: number;
   turnRate: number;
@@ -93,6 +100,37 @@ export interface Formation {
   routeDirection: Vec2;
   lastThreatDirection: Vec2;
   flankThreat: number;
+  collapseReason?: string;
+}
+
+export interface CommandFocusState {
+  current: number;
+  max: number;
+  recoveryRate: number;
+  predictedFiveSeconds: number;
+  spent: number;
+  recovered: number;
+  lastSpend?: string;
+  lastRecovery?: string;
+}
+
+export interface ObjectiveZone {
+  id: string;
+  name: string;
+  type: ObjectiveType;
+  center: Vec2;
+  radius: number;
+  owner?: SideId;
+  contested: boolean;
+  focus: boolean;
+  control: Record<SideId, number>;
+  controlTime: Record<SideId, number>;
+  bonuses: {
+    commandFocusRecovery?: number;
+    cohesionRecovery?: number;
+    moveEfficiency?: number;
+    visibility?: number;
+  };
 }
 
 export interface ContactLane {
@@ -139,7 +177,7 @@ export interface DebugFlags {
 
 export interface SimEvent {
   time: number;
-  kind: "command" | "engagement" | "morale" | "ai" | "intent";
+  kind: "command" | "engagement" | "morale" | "ai" | "intent" | "objective" | "doctrine";
   message: string;
   formationId?: string;
 }
@@ -149,4 +187,8 @@ export interface SimSnapshot {
   formations: Formation[];
   engagements: Engagement[];
   events: SimEvent[];
+  commandFocus: CommandFocusState;
+  doctrine: BattleDoctrine;
+  objectives: ObjectiveZone[];
+  collapseReasons: Array<{ formationId: string; reason: string; time: number }>;
 }

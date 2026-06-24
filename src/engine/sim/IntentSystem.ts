@@ -6,7 +6,9 @@ import type {
   IntentSnapshot,
   LineIntent,
   LineIntentOptions,
+  ObjectiveFocusIntent,
   PressureStroke,
+  ReserveIntent,
   Standard,
   TacticalIntent,
 } from "./IntentTypes";
@@ -121,6 +123,52 @@ export class IntentSystem {
     return intent;
   }
 
+  addReserveIntent(
+    side: SimSideId,
+    condition: ReserveIntent["condition"],
+    formationIds: string[],
+    createdAt: number,
+    target?: Vec2,
+  ): ReserveIntent {
+    const intent: ReserveIntent = {
+      id: this.nextIntentId,
+      kind: "reserve",
+      side,
+      condition,
+      formationIds: [...formationIds],
+      target: target ? { ...target } : undefined,
+      createdAt,
+    };
+    this.nextIntentId += 1;
+    this.intents.push(intent);
+    this.lastStatus = `Reserve committed: ${formationIds.length} formations`;
+    this.revision += 1;
+    return intent;
+  }
+
+  addObjectiveFocus(
+    side: SimSideId,
+    objectiveId: string,
+    position: Vec2,
+    formationIds: string[],
+    createdAt: number,
+  ): ObjectiveFocusIntent {
+    const intent: ObjectiveFocusIntent = {
+      id: this.nextIntentId,
+      kind: "objective_focus",
+      side,
+      objectiveId,
+      position: { ...position },
+      formationIds: [...formationIds],
+      createdAt,
+    };
+    this.nextIntentId += 1;
+    this.intents.push(intent);
+    this.lastStatus = `Objective focus: ${objectiveId}`;
+    this.revision += 1;
+    return intent;
+  }
+
   addContingency(
     side: SimSideId,
     formationIds: string[],
@@ -221,6 +269,8 @@ export class IntentSystem {
       pressureStrokes: intents.filter((intent): intent is PressureStroke => intent.kind === "pressure_stroke"),
       standards: intents.filter((intent): intent is Standard => intent.kind === "standard"),
       fallbackLines: intents.filter((intent): intent is FallbackLine => intent.kind === "fallback_line"),
+      reserveIntents: intents.filter((intent): intent is ReserveIntent => intent.kind === "reserve"),
+      objectiveFocuses: intents.filter((intent): intent is ObjectiveFocusIntent => intent.kind === "objective_focus"),
       revision: this.revision,
       lastStatus: this.lastStatus,
     };
@@ -245,6 +295,12 @@ function cloneIntent(intent: TacticalIntent): TacticalIntent {
   }
   if (intent.kind === "pressure_stroke" || intent.kind === "fallback_line") {
     return { ...intent, points: clonePoints(intent.points), formationIds: [...intent.formationIds] };
+  }
+  if (intent.kind === "reserve") {
+    return { ...intent, target: intent.target ? { ...intent.target } : undefined, formationIds: [...intent.formationIds] };
+  }
+  if (intent.kind === "objective_focus") {
+    return { ...intent, position: { ...intent.position }, formationIds: [...intent.formationIds] };
   }
   if (intent.kind === "standard") {
     return {
