@@ -107,7 +107,12 @@ function battleScore(
 ): number {
   const objectiveScore = objectives.reduce((sum, objective) => sum + objective.controlTime[side], 0) / 78;
   const routPenalty = formations.filter((formation) => formation.side === side && formation.state === "routing").length * 0.13;
-  return sideMorale(formations, side) + objectiveScore * 0.09 - routPenalty;
+  const lineIntegrity =
+    formations
+      .filter((formation) => formation.side === side)
+      .reduce((sum, formation) => sum + formation.formationIntegrity, 0) /
+    Math.max(1, formations.filter((formation) => formation.side === side).length);
+  return sideMorale(formations, side) + lineIntegrity * 0.12 + objectiveScore * 0.09 - routPenalty;
 }
 
 function lineAdherence(world: SimWorld): number {
