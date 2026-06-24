@@ -6,6 +6,7 @@ import type { SimWorld } from "../engine/sim/SimWorld";
 import { doctrineLabel } from "../engine/sim/ComplexityModel";
 
 export class Hud {
+  private readonly commandBar: HTMLDivElement;
   private readonly selectedPanel: HTMLDivElement;
   private readonly intentPanel: HTMLDivElement;
   private readonly metricsPanel: HTMLDivElement;
@@ -17,12 +18,12 @@ export class Hud {
     const hud = document.createElement("div");
     hud.className = "hud";
 
-    const commandBar = document.createElement("div");
-    commandBar.className = "command-bar";
-    this.addCommandButton(commandBar, "hold", "Hold");
-    this.addCommandButton(commandBar, "advance", "Advance");
-    this.addCommandButton(commandBar, "reform", "Reform");
-    this.addCommandButton(commandBar, "retreat", "Retreat");
+    this.commandBar = document.createElement("div");
+    this.commandBar.className = "command-bar";
+    this.addCommandButton(this.commandBar, "hold", "Hold");
+    this.addCommandButton(this.commandBar, "advance", "Advance");
+    this.addCommandButton(this.commandBar, "reform", "Reform");
+    this.addCommandButton(this.commandBar, "retreat", "Retreat");
 
     this.selectedPanel = document.createElement("div");
     this.selectedPanel.className = "panel selected-panel";
@@ -44,7 +45,7 @@ export class Hud {
     this.addDebugToggle("labels", "Labels");
     this.addDebugToggle("pressureLabels", "Stats");
 
-    hud.append(commandBar, this.selectedPanel, this.intentPanel, this.metricsPanel, this.eventList, this.debugPanel);
+    hud.append(this.commandBar, this.selectedPanel, this.intentPanel, this.metricsPanel, this.eventList, this.debugPanel);
     root.appendChild(hud);
   }
 
@@ -55,6 +56,7 @@ export class Hud {
     gesturePreview: GesturePreview,
   ): void {
     const selected = snapshot.formations.filter((formation) => formation.selected);
+    this.commandBar.classList.toggle("has-selection", selected.length > 0);
     for (const [type, button] of this.commandButtons) {
       button.disabled = selected.length === 0 || (type === "retreat" && selected.every((f) => f.state === "routing"));
     }
